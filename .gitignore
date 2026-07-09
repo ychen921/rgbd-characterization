@@ -1,0 +1,44 @@
+# ROS2 / colcon generated folders
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# CMake artifacts
+*.o
+*.so
+*.a
+CMakeCache.txt
+CMakeFiles/
+
+# ROS bag / recorded data
+bags/*
+!bags/.gitkeep
+*.db3
+*.mcap
+*.bag
+
+# Data
+data/*
+!data/.gitkeep
+
+# Results
+results/*
+!results/.gitkeep
+!results/tf_tree/.gitkeep
+
+# Keep selected result documentation manually if needed
+!results/tf_tree/
+!results/tf_tree/*.pdf
+!results/tf_tree/*.gv
+
+# ignore third-party Orbbec SDK if this repo is only for your own project
+src/OrbbecSDK_ROS2/
