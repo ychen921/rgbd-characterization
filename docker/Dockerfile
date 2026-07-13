@@ -114,9 +114,4 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
     echo "export ROS_LOCALHOST_ONLY=\${ROS_LOCALHOST_ONLY:-0}" >> /root/.bashrc && \
     echo "export RMW_IMPLEMENTATION=\${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}" >> /root/.bashrc
 
-# ------------------------------------------------------------
-# Workspace
-# ------------------------------------------------------------
-WORKDIR /workspaces/orbbec_ws
-
 CMD ["bash"]
