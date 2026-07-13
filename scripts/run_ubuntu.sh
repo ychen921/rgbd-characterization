@@ -3,7 +3,7 @@ set -e
 
 IMAGE_NAME="ros2-humble:latest"
 CONTAINER_NAME="ros2-humble-orbbec-ubuntu"
-ORBBEC_WS="$HOME/dev/orbbec_ws"
+WS="$HOME/dev/rgbd-characterization"
 
 docker run -it --rm \
   --name "${CONTAINER_NAME}" \
@@ -19,10 +19,10 @@ docker run -it --rm \
   -e ROS_LOCALHOST_ONLY=0 \
   -e FASTRTPS_DEFAULT_PROFILES_FILE=/workspaces/orbbec_ws/config/fastdds_udp_only.xml \
   -e FASTDDS_DEFAULT_PROFILES_FILE=/workspaces/orbbec_ws/config/fastdds_udp_only.xml \
-  -v "${ORBBEC_WS}:/workspaces/orbbec_ws" \
-  -v "${ORBBEC_WS}/bags:/bags" \
-  -v "${ORBBEC_WS}/data:/data" \
-  -v "${ORBBEC_WS}/results:/results" \
+  -v "${WS}:/workspaces/orbbec_ws" \
+  -v "${WS}/bags:/bags" \
+  -v "${WS}/data:/data" \
+  -v "${WS}/results:/results" \
   -w /workspaces/orbbec_ws \
   "${IMAGE_NAME}" \
   bash
