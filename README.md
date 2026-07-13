@@ -161,6 +161,7 @@ Common Orbbec topics:
 
 ```bash
 /camera/color/image_raw
+/camera/color/image_raw/compressed
 /camera/color/camera_info
 /camera/depth/image_raw
 /camera/depth/image_unaligned

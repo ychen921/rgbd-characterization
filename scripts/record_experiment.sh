@@ -227,6 +227,7 @@ TOPICS=(
     /camera/depth/metadata
     /camera/depth/points
     /camera/color/image_raw
+    /camera/color/image_raw/compressed
     /camera/color/camera_info
     /camera/device_status
     /camera/depth_filter_status
