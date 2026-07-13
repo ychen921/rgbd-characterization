@@ -144,7 +144,7 @@ After sourcing the environment:
 ```bash
 cd ~/dev/orbbec_ws
 source scripts/host_orbbec_env.sh
-ros2 launch orbbec_camera gemini_336.launch.py
+ros2 launch orbbec_camera gemini_330_series.launch.py
 ```
 
 ---
