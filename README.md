@@ -164,6 +164,7 @@ Common Orbbec topics:
 /camera/color/image_raw/compressed
 /camera/color/camera_info
 /camera/depth/image_raw
+/camera/depth/image_raw/compressedDepth
 /camera/depth/image_unaligned
 /camera/depth/camera_info
 /camera/depth/points

@@ -223,6 +223,7 @@ echo
 
 TOPICS=(
     /camera/depth/image_raw
+    /camera/depth/image_raw/compressedDepth
     /camera/depth/camera_info
     /camera/depth/metadata
     /camera/depth/points
