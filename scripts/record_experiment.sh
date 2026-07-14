@@ -240,27 +240,37 @@ TOPICS=(
 # rosbag recording
 # ============================================================
 
+# ============================================================
+# rosbag recording
+# ============================================================
+
 echo
 echo "Starting rosbag recording..."
 echo
 
+ros2 bag record \
+    -o "${ROSBAG_DIR}" \
+    "${TOPICS[@]}" &
+
+ROSBAG_PID=$!
+
+echo "rosbag PID: ${ROSBAG_PID}"
+
+sleep "${DURATION_SEC}"
+
+echo
+echo "Recording duration reached."
+echo "Stopping rosbag gracefully..."
+
+kill -SIGINT "${ROSBAG_PID}"
+
 set +e
-
-timeout \
-    --signal=SIGINT \
-    --kill-after=10s \
-    "${DURATION_SEC}s" \
-    ros2 bag record \
-        -o "${ROSBAG_DIR}" \
-        "${TOPICS[@]}"
-
+wait "${ROSBAG_PID}"
 RECORD_EXIT_CODE=$?
-
 set -e
 
-# timeout returns 124 when duration expires normally.
 if [[ "${RECORD_EXIT_CODE}" -ne 0 ]] &&
-   [[ "${RECORD_EXIT_CODE}" -ne 124 ]]; then
+   [[ "${RECORD_EXIT_CODE}" -ne 130 ]]; then
 
     echo
     echo "ERROR: rosbag recording failed"
