@@ -5,14 +5,16 @@ from pathlib import Path
 
 import numpy as np
 import rosbag2_py
+from rclpy.serialization import deserialize_message
+from sensor_msgs.msg import Image
 
 
 class DepthBagReader:
     """Read raw depth frames from a ROS 2 bag.
 
-    Frame deserialization is intentionally left for the next implementation
-    step. Iterating :meth:`read_frames` currently opens the bag and validates
-    the configured depth topic before raising ``NotImplementedError``.
+    ROS Image messages can be read and deserialized. Conversion from a ROS
+    Image to a NumPy depth frame is intentionally left for the next
+    implementation step.
     """
 
     _DEPTH_MESSAGE_TYPE = "sensor_msgs/msg/Image"
@@ -30,13 +32,39 @@ class DepthBagReader:
         The iterator will yield ``(recorded_timestamp_ns, depth_frame)`` once
         frame deserialization is implemented.
         """
+        for _timestamp_ns, _message in self._read_depth_messages():
+            raise NotImplementedError(
+                "Depth Image to NumPy decoding has not been implemented yet"
+            )
+            yield  # pragma: no cover - keeps the planned iterator API
+
+    def _read_depth_messages(self) -> Iterator[tuple[int, Image]]:
+        """Yield recorded timestamps and deserialized depth Image messages."""
         reader = self._open_reader()
         self._validate_depth_topic(reader)
-
-        raise NotImplementedError(
-            "Depth frame deserialization has not been implemented yet"
+        reader.set_filter(
+            rosbag2_py.StorageFilter(
+                topics=[self.depth_topic],
+            )
         )
-        yield  # pragma: no cover - keeps this method an iterator until step 3
+
+        while reader.has_next():
+            topic, serialized_data, timestamp_ns = reader.read_next()
+
+            # Keep this guard even though the storage filter should only return
+            # the configured topic.
+            if topic != self.depth_topic:
+                continue
+
+            try:
+                message = deserialize_message(serialized_data, Image)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to deserialize depth message from topic "
+                    f"{topic!r} at timestamp {timestamp_ns}"
+                ) from exc
+
+            yield int(timestamp_ns), message
 
     def _validate_configuration(self) -> None:
         if not self.depth_topic:
