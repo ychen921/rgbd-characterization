@@ -10,14 +10,11 @@ from sensor_msgs.msg import Image
 
 
 class DepthBagReader:
-    """Read raw depth frames from a ROS 2 bag.
-
-    ROS Image messages can be read and deserialized. Conversion from a ROS
-    Image to a NumPy depth frame is intentionally left for the next
-    implementation step.
-    """
+    """Read raw uint16 depth frames from a ROS 2 bag."""
 
     _DEPTH_MESSAGE_TYPE = "sensor_msgs/msg/Image"
+    _DEPTH_ENCODING = "16UC1"
+    _BYTES_PER_PIXEL = 2
     _STORAGE_ID = "sqlite3"
 
     def __init__(self, bag_path: Path, depth_topic: str) -> None:
@@ -27,16 +24,17 @@ class DepthBagReader:
         self._validate_configuration()
 
     def read_frames(self) -> Iterator[tuple[int, np.ndarray]]:
-        """Validate the bag and depth topic, then iterate depth frames.
+        """Yield recorded timestamps and decoded uint16 depth frames."""
+        for timestamp_ns, message in self._read_depth_messages():
+            try:
+                depth_frame = self._decode_depth_image(message)
+            except ValueError as exc:
+                raise ValueError(
+                    "Invalid depth Image at recorded timestamp "
+                    f"{timestamp_ns}: {exc}"
+                ) from exc
 
-        The iterator will yield ``(recorded_timestamp_ns, depth_frame)`` once
-        frame deserialization is implemented.
-        """
-        for _timestamp_ns, _message in self._read_depth_messages():
-            raise NotImplementedError(
-                "Depth Image to NumPy decoding has not been implemented yet"
-            )
-            yield  # pragma: no cover - keeps the planned iterator API
+            yield timestamp_ns, depth_frame
 
     def _read_depth_messages(self) -> Iterator[tuple[int, Image]]:
         """Yield recorded timestamps and deserialized depth Image messages."""
@@ -65,6 +63,69 @@ class DepthBagReader:
                 ) from exc
 
             yield int(timestamp_ns), message
+
+    @staticmethod
+    def _decode_depth_image(message: Image) -> np.ndarray:
+        """Decode a 16UC1 ROS Image into an owned native uint16 array."""
+        if message.encoding != DepthBagReader._DEPTH_ENCODING:
+            raise ValueError(
+                f"Unsupported depth encoding {message.encoding!r}; "
+                f"expected {DepthBagReader._DEPTH_ENCODING!r}"
+            )
+
+        height = int(message.height)
+        width = int(message.width)
+        step = int(message.step)
+        is_bigendian = int(message.is_bigendian)
+
+        if height <= 0 or width <= 0:
+            raise ValueError(
+                f"Depth dimensions must be positive; got height={height}, "
+                f"width={width}"
+            )
+
+        minimum_step = width * DepthBagReader._BYTES_PER_PIXEL
+        if step < minimum_step:
+            raise ValueError(
+                f"Depth row step is too small; got {step} bytes, "
+                f"expected at least {minimum_step}"
+            )
+
+        if is_bigendian not in (0, 1):
+            raise ValueError(
+                f"is_bigendian must be 0 or 1; got {is_bigendian}"
+            )
+
+        try:
+            data_buffer = memoryview(message.data)
+        except TypeError as exc:
+            raise ValueError("Depth image data does not expose a byte buffer") from exc
+
+        if not data_buffer.c_contiguous:
+            raise ValueError("Depth image data buffer must be C-contiguous")
+
+        expected_data_size = height * step
+        if data_buffer.nbytes != expected_data_size:
+            raise ValueError(
+                f"Depth data size mismatch; got {data_buffer.nbytes} bytes, "
+                f"expected {expected_data_size}"
+            )
+
+        byte_order = ">" if is_bigendian else "<"
+        source_dtype = np.dtype(f"{byte_order}u2")
+        frame_view = np.ndarray(
+            shape=(height, width),
+            dtype=source_dtype,
+            buffer=data_buffer,
+            strides=(step, DepthBagReader._BYTES_PER_PIXEL),
+        )
+
+        return np.array(
+            frame_view,
+            dtype=np.uint16,
+            order="C",
+            copy=True,
+        )
 
     def _validate_configuration(self) -> None:
         if not self.depth_topic:
