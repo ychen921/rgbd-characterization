@@ -1,0 +1,45 @@
+# Tools
+
+## `extract_dataset.py`
+
+Extracts raw depth frames from a ROS 2 bag into an NPZ dataset.
+
+### Usage
+
+Load the ROS 2 Humble environment and go to the project root:
+
+```bash
+source /opt/ros/humble/setup.bash
+cd ~/dev/rgbd-characterization
+```
+
+Run the extraction:
+
+```bash
+python3 tools/extract_dataset.py \
+    bags/scene01_white_d050_r01/rosbag \
+    data/scene01_white_d050_r01/depth.npz
+```
+
+Arguments:
+
+```text
+python3 tools/extract_dataset.py BAG_PATH OUTPUT_PATH
+```
+
+- `BAG_PATH` must be the rosbag directory that directly contains `metadata.yaml`.
+- The parent directory of `OUTPUT_PATH` is created automatically.
+- The depth topic is fixed to `/camera/depth/image_raw`.
+
+The output NPZ contains:
+
+| Array | Shape | Dtype |
+|---|---|---|
+| `depth` | `(N, H, W)` | `uint16` |
+| `timestamps_ns` | `(N,)` | `int64` |
+
+Show the CLI help:
+
+```bash
+python3 tools/extract_dataset.py --help
+```
