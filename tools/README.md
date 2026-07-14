@@ -43,3 +43,20 @@ Show the CLI help:
 ```bash
 python3 tools/extract_dataset.py --help
 ```
+
+## `inspect_dataset.py`
+
+Prints dataset statistics and saves first, middle, and last frame images.
+
+```bash
+python3 tools/inspect_dataset.py \
+    data/scene01_white_d050_r01/depth.npz
+```
+
+Images are written to:
+
+```text
+results/scene01_white_d050_r01/inspection/
+```
+
+Use `--output-dir PATH` to select a different image directory.
