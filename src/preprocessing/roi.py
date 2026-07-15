@@ -58,8 +58,8 @@ class RectROI:
 
         return frames[
             :,
-            self.y : self.y + self.height,
-            self.x : self.x + self.width,
+            self.y:self.y + self.height,
+            self.x:self.x + self.width,
         ]
 
 
@@ -132,13 +132,17 @@ def load_roi(path: Path) -> RectROI:
         with input_path.open("r", encoding="utf-8") as stream:
             document = yaml.safe_load(stream)
     except yaml.YAMLError as error:
-        raise ValueError(f"Invalid ROI YAML in {input_path}: {error}") from error
+        message = f"Invalid ROI YAML in {input_path}: {error}"
+        raise ValueError(message) from error
 
     root = _require_mapping(document, "ROI configuration")
     _validate_non_empty_string(root.get("name"), "name")
 
     source = _require_mapping(root.get("source"), "source")
-    _validate_non_empty_string(source.get("experiment"), "source experiment")
+    _validate_non_empty_string(
+        source.get("experiment"),
+        "source experiment",
+    )
     frame_index = source.get("frame_index")
     if (
         not isinstance(frame_index, int)
