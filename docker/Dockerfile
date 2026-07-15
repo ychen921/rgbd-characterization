@@ -98,8 +98,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ------------------------------------------------------------
 # Python perception / data analysis packages
+#
+# Jammy's python3-opencv and python3-matplotlib are compiled against the
+# NumPy 1.x ABI. Install NumPy 2-compatible wheels into /usr/local so the
+# project tools do not load those system Python extensions with NumPy 2.
 # ------------------------------------------------------------
 RUN pip3 install --no-cache-dir \
+    "numpy==2.2.6" \
+    "opencv-python==4.12.0.88" \
+    matplotlib \
     scikit-learn \
     pandas \
     open3d
