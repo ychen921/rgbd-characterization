@@ -60,3 +60,23 @@ results/scene01_white_d050_r01/inspection/
 ```
 
 Use `--output-dir PATH` to select a different image directory.
+
+## `select_roi.py`
+
+Displays the middle depth frame and saves a rectangular white-board ROI shared
+by repeats at the same scene, target, and distance.
+
+```bash
+python3 tools/select_roi.py \
+    data/scene01_white_d050_r01
+```
+
+The experiment directory must contain `depth.npz`. The generated configuration
+is saved as:
+
+```text
+config/roi/scene01_white_d050.yaml
+```
+
+If that ROI file already exists, selection is skipped without overwriting it.
+Use `--roi-root PATH` to select a different configuration directory.
