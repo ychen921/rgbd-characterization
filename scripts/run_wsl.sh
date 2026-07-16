@@ -17,7 +17,7 @@ docker run -it --rm \
   --hostname "${HOST_HOSTNAME}" \
   --user "${HOST_UID}:${HOST_GID}" \
   -v /etc/passwd:/etc/passwd:ro \
-  -v /etc/group:/tc/group:ro \
+  -v /etc/group:/etc/group:ro \
   --network host \
   --ipc host \
   -e DISPLAY="${DISPLAY}" \
