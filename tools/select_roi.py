@@ -1,4 +1,4 @@
-"""Interactively select and save a rectangular white-board ROI."""
+"""Interactively select and save a rectangular ROI."""
 
 import argparse
 import sys
@@ -17,7 +17,7 @@ from src.preprocessing.roi import RectROI, derive_roi_key, get_roi_path, save_ro
 
 
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
-WINDOW_NAME = "Select White Board ROI"
+WINDOW_NAME = "Select ROI"
 DISPLAY_PERCENTILE_LOW = 1.0
 DISPLAY_PERCENTILE_HIGH = 99.0
 
@@ -25,7 +25,7 @@ DISPLAY_PERCENTILE_HIGH = 99.0
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for interactive ROI selection."""
     parser = argparse.ArgumentParser(
-        description="Select a white-board ROI from an extracted depth dataset."
+        description="Select an ROI from an extracted depth dataset."
     )
     parser.add_argument(
         "dataset_dir",
