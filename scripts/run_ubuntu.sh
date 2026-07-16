@@ -3,7 +3,7 @@ set -e
 
 IMAGE_NAME="ros2-humble:latest"
 CONTAINER_NAME="ros2-humble-orbbec-ubuntu"
-WS="$HOME/dev/rgbd-characterization"
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 HOST_USER="$(id -un)"
