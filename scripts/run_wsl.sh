@@ -17,9 +17,11 @@ docker run -it --rm \
   --hostname "${HOST_HOSTNAME}" \
   --user "${HOST_UID}:${HOST_GID}" \
   -v /etc/passwd:/etc/passwd:ro \
-  -v /etc/group:/etc/group:ro \
+  -v /etc/group:/tc/group:ro \
   --network host \
   --ipc host \
+  -e DISPLAY="${DISPLAY}" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
   -e USER="${HOST_USER}" \
   -e LOGNAME="${HOST_USER}" \
   -e HOME="/home/${HOST_USER}" \
