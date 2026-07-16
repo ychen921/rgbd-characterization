@@ -35,6 +35,9 @@ results/*
 !results/.gitkeep
 !results/tf_tree/.gitkeep
 
+# Config
+config/roi*
+
 # Keep selected result documentation manually if needed
 !results/tf_tree/
 !results/tf_tree/*.pdf
