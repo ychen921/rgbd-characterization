@@ -40,6 +40,8 @@ class DepthBagReader:
         """Yield recorded timestamps and deserialized depth Image messages."""
         reader = self._open_reader()
         self._validate_depth_topic(reader)
+
+        # Restrict sequential reads to the configured depth topic.
         reader.set_filter(
             rosbag2_py.StorageFilter(
                 topics=[self.depth_topic],
@@ -113,6 +115,8 @@ class DepthBagReader:
 
         byte_order = ">" if is_bigendian else "<"
         source_dtype = np.dtype(f"{byte_order}u2")
+
+        # Decode rows with the ROS step so any row padding is skipped correctly.
         frame_view = np.ndarray(
             shape=(height, width),
             dtype=source_dtype,
@@ -120,6 +124,7 @@ class DepthBagReader:
             strides=(step, DepthBagReader._BYTES_PER_PIXEL),
         )
 
+        # Return owned native-endian data independent of the ROS message buffer.
         return np.array(
             frame_view,
             dtype=np.uint16,

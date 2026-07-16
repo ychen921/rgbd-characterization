@@ -55,6 +55,7 @@ def extract_dataset(
     frames: list[np.ndarray] = []
     timestamps: list[int] = []
 
+    # Keep each frame aligned with its recorded timestamp.
     for timestamp_ns, depth_frame in reader.read_frames():
         timestamps.append(timestamp_ns)
         frames.append(depth_frame)
@@ -64,6 +65,7 @@ def extract_dataset(
             f"No depth frames found on topic {depth_topic!r} in bag {bag_path}"
         )
 
+    # Build the dataset arrays with shapes (N, H, W) and (N,).
     depth = np.stack(frames, axis=0)
     timestamps_ns = np.asarray(timestamps, dtype=np.int64)
 

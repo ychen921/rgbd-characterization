@@ -84,6 +84,7 @@ class DepthDataset:
         """Load and validate a dataset from a NumPy NPZ archive."""
         input_path = Path(path).expanduser()
 
+        # Load only plain arrays and require both parts of the dataset schema.
         with np.load(input_path, allow_pickle=False) as archive:
             missing_keys = {
                 "depth",
@@ -98,6 +99,7 @@ class DepthDataset:
             depth = archive["depth"]
             timestamps_ns = archive["timestamps_ns"]
 
+        # Construction reuses the same shape and dtype validation as new data.
         return cls(
             depth=depth,
             timestamps_ns=timestamps_ns,

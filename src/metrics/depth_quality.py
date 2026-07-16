@@ -45,9 +45,11 @@ def compute_depth_quality(depth: np.ndarray) -> DepthQualityResult:
             max_uint16_max_pixels_per_frame=0,
         )
 
+    # Identify the two raw special-value observations independently.
     zero_mask = depth == 0
     max_uint16_mask = depth == MAX_UINT16
 
+    # Summarize occurrence over the full ROI and at each pixel over time.
     zero_ratio = float(np.count_nonzero(zero_mask) / depth.size)
     zero_ratio_map = np.mean(zero_mask, axis=0)
 
@@ -56,6 +58,7 @@ def compute_depth_quality(depth: np.ndarray) -> DepthQualityResult:
     )
     max_uint16_ratio_map = np.mean(max_uint16_mask, axis=0)
 
+    # Measure how broadly max-uint16 bursts affect individual frames.
     max_uint16_pixels_per_frame = np.count_nonzero(
         max_uint16_mask,
         axis=(1, 2),

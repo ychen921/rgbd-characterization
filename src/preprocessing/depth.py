@@ -25,6 +25,7 @@ def prepare_depth(depth: np.ndarray) -> np.ndarray:
     if depth.dtype != np.uint16:
         raise ValueError(f"depth must have dtype uint16; got {depth.dtype}")
 
+    # Convert raw special values to NaN for downstream nan-aware metrics.
     prepared = depth.astype(np.float32, copy=True)
     excluded = (depth == 0) | (depth == MAX_UINT16)
     prepared[excluded] = np.nan

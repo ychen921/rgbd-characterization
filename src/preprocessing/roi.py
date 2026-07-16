@@ -56,6 +56,7 @@ class RectROI:
         if self.y + self.height > image_height:
             raise ValueError("ROI exceeds image height")
 
+        # Apply the same rectangle to every frame in the sequence.
         return frames[
             :,
             self.y:self.y + self.height,
@@ -105,6 +106,7 @@ def save_roi(
     output_path = Path(path).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Store selection provenance with the rectangle for reproducibility.
     document = {
         "name": name,
         "source": {
@@ -135,6 +137,7 @@ def load_roi(path: Path) -> RectROI:
         message = f"Invalid ROI YAML in {input_path}: {error}"
         raise ValueError(message) from error
 
+    # Validate the persisted schema before constructing the ROI.
     root = _require_mapping(document, "ROI configuration")
     _validate_non_empty_string(root.get("name"), "name")
 

@@ -62,6 +62,7 @@ def compute_depth_histogram(depth: np.ndarray) -> np.ndarray:
     """Count all uint16 values without flattening the full dataset."""
     histogram = np.zeros(UINT16_VALUE_COUNT, dtype=np.uint64)
 
+    # Accumulate one frame at a time to avoid a full-dataset flattened copy.
     for frame in depth:
         frame_histogram = np.bincount(
             frame.ravel(),
@@ -89,6 +90,7 @@ def histogram_percentile(
     upper_rank = math.ceil(rank)
     cumulative = np.cumsum(histogram)
 
+    # Map percentile ranks back to raw uint16 values.
     lower_value = int(np.searchsorted(cumulative, lower_rank + 1))
     upper_value = int(np.searchsorted(cumulative, upper_rank + 1))
     fraction = rank - lower_rank
@@ -188,6 +190,7 @@ def save_inspection_images(
     display_min = histogram_percentile(histogram, DISPLAY_PERCENTILE_LOW)
     display_max = histogram_percentile(histogram, DISPLAY_PERCENTILE_HIGH)
 
+    # Fall back to the raw range when percentile scaling collapses.
     if display_min >= display_max:
         display_min = raw_min
         display_max = raw_max
@@ -201,6 +204,7 @@ def save_inspection_images(
     )
     image_paths: list[Path] = []
 
+    # Use one shared depth scale so the three frames remain comparable.
     for label, index in frames:
         image_path = output_dir / f"frame_{label}.png"
         figure, axes = plt.subplots(figsize=(10, 6))
@@ -240,6 +244,7 @@ def inspect_dataset(dataset_path: Path, output_dir: Path | None = None) -> None:
     if dataset.num_frames == 0:
         raise ValueError(f"Dataset contains no depth frames: {dataset_path}")
 
+    # Reuse one histogram for statistics and consistent image scaling.
     resolved_output_dir = resolve_output_dir(dataset_path, output_dir)
     histogram = compute_depth_histogram(dataset.depth)
     image_paths = save_inspection_images(

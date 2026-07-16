@@ -50,6 +50,7 @@ def depth_to_display(depth: np.ndarray) -> np.ndarray:
     if depth.ndim != 2:
         raise ValueError(f"depth must have shape (H, W); got shape {depth.shape}")
 
+    # Exclude raw special values from display-range estimation.
     max_uint16 = np.iinfo(np.uint16).max
     valid = (depth > 0) & (depth < max_uint16)
     if not np.any(valid):
@@ -61,6 +62,7 @@ def depth_to_display(depth: np.ndarray) -> np.ndarray:
     if upper <= lower:
         raise ValueError("Invalid display depth range")
 
+    # Percentile clipping preserves board contrast despite extreme values.
     clipped = np.clip(depth.astype(np.float32), lower, upper)
     normalized = (clipped - lower) / (upper - lower) * 255.0
     image = normalized.astype(np.uint8)
@@ -107,6 +109,7 @@ def select_roi(dataset_dir: Path, roi_root: Path = DEFAULT_ROI_ROOT) -> Path:
     print(f"  {roi_key}")
     print()
 
+    # Repeats share one distance-group ROI, so keep an existing selection.
     if roi_path.exists():
         print("ROI already exists:")
         print(f"  {roi_path}")
@@ -119,11 +122,14 @@ def select_roi(dataset_dir: Path, roi_root: Path = DEFAULT_ROI_ROOT) -> Path:
     if dataset.num_frames == 0:
         raise ValueError(f"Dataset contains no depth frames: {dataset_path}")
 
+    # Use the middle frame as a deterministic representative view.
     frame_index = dataset.num_frames // 2
     display_image = depth_to_display(dataset.depth[frame_index])
 
     print("Selecting ROI...")
     roi = choose_rectangle(display_image)
+
+    # Validate the selected rectangle against the dataset dimensions.
     roi.crop(dataset.depth)
 
     save_roi(
