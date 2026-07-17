@@ -44,6 +44,7 @@ def compute_measured_depth(depth: np.ndarray) -> MeasuredDepthResult:
     if not np.any(valid_frame_mask):
         return _undefined_result(frame_median)
 
+    # Compute the median depth for each valid frame, ignoring excluded pixels.
     frame_median[valid_frame_mask] = np.nanmedian(
         depth[valid_frame_mask],
         axis=(1, 2),
