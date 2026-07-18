@@ -1,5 +1,6 @@
 """Analyze one extracted baseline depth dataset."""
 
+import csv
 from dataclasses import dataclass
 import sys
 from pathlib import Path
@@ -245,6 +246,7 @@ def save_summary(
         exist_ok=True,
     )
 
+    # Write the YAML file without overwriting an existing file.
     with summary_path.open(
         "x",
         encoding="utf-8",
@@ -255,6 +257,73 @@ def save_summary(
             sort_keys=False,
             allow_unicode=True,
         )
+
+
+def save_frame_median_csv(
+    csv_path: Path,
+    result: BaselineAnalysisResult,
+) -> None:
+    """Save timestamp-aligned per-frame median depth values."""
+    
+    csv_path = Path(csv_path).expanduser()
+
+    timestamps_ns = result.source.dataset.timestamps_ns
+    frame_medians = result.metrics.measured_depth.frame_median
+
+    # Validate shapes before creating the file.
+    if timestamps_ns.ndim != 1:
+        raise ValueError(
+            f"timestamps_ns must have shape (N,); got shape "
+            f"{timestamps_ns.shape}"
+        )
+    if frame_medians.ndim != 1:
+        raise ValueError(
+            f"frame_medians must have shape (N,); got shape "
+            f"{frame_medians.shape}"
+        )
+    if timestamps_ns.shape != frame_medians.shape:
+        raise ValueError(
+            "Timestamp and frame-median counts do not match"
+        )
+    
+    csv_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    # Write the CSV file without overwriting an existing file.
+    with csv_path.open(
+        "x",
+        encoding="utf-8",
+        newline="",
+    ) as stream:
+        writer = csv.writer(stream)
+
+        # Write the header row
+        writer.writerow(
+            [
+                "frame_index",
+                "timestamp_ns",
+                "median_depth_mm",
+            ]
+        )
+
+        # Write one row per frame, leaving undefined median depth blank.
+        for frame_index, (timestamp_ns, median_depth) in enumerate(
+            zip(timestamps_ns, frame_medians, strict=True),
+        ):
+            writer.writerow(
+                [
+                    frame_index,
+                    int(timestamp_ns),
+                    (
+                        ""
+                        if np.isnan(median_depth)
+                        else float(median_depth)
+                    ),
+                ]
+            )
+
 
 
 def analyze_baseline(

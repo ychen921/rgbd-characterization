@@ -1,5 +1,6 @@
 """Tests for baseline analysis orchestration."""
 
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,7 @@ from tools.analyze_baseline import (
     build_summary,
     compute_baseline_metrics,
     load_baseline_input,
+    save_frame_median_csv,
     save_summary,
 )
 
@@ -326,3 +328,71 @@ def test_save_summary_rejects_existing_file(
         loaded = yaml.safe_load(stream)
 
     assert loaded == original
+
+
+def test_save_frame_median_csv_writes_timestamp_aligned_rows(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[10, 12]],
+            [[0, 65535]],
+            [[20, 24]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=2, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    csv_path = (
+        tmp_path
+        / "results"
+        / EXPERIMENT_NAME
+        / "baseline"
+        / "frame_median_depth.csv"
+    )
+
+    save_frame_median_csv(csv_path, result)
+
+    with csv_path.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+
+    assert rows == [
+        ["frame_index", "timestamp_ns", "median_depth_mm"],
+        ["0", "0", "11.0"],
+        ["1", "1", ""],
+        ["2", "2", "22.0"],
+    ]
+
+
+def test_save_frame_median_csv_rejects_existing_file(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array([[[10, 12]]], dtype=np.uint16)
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=2, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    csv_path = tmp_path / "frame_median_depth.csv"
+
+    save_frame_median_csv(csv_path, result)
+
+    with pytest.raises(FileExistsError):
+        save_frame_median_csv(csv_path, result)
+
+    with csv_path.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+
+    assert rows == [
+        ["frame_index", "timestamp_ns", "median_depth_mm"],
+        ["0", "0", "11.0"],
+    ]
