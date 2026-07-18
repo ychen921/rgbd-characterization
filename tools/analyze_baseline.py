@@ -63,6 +63,7 @@ class BaselineAnalysisResult:
 
     source: BaselineInput
     metrics: BaselineMetricResults
+    min_valid_ratio: float
 
 
 def compute_baseline_metrics(
@@ -152,6 +153,85 @@ def load_baseline_input(
         raw_roi=raw_roi,
     )
 
+
+def _finite_or_none(value: float) -> float | None:
+    """Return a finite Python float, or None for an undefined metric."""
+    if not np.isfinite(value):
+        return None
+    return float(value)
+
+
+def _summary_path(path: Path) -> str:
+    """Return a project-relative path when possible."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def build_summary(
+    result: BaselineAnalysisResult,
+) -> dict[str, object]:
+    """Build a YAML-safe summary for one baseline analysis."""
+    source = result.source
+    dataset = source.dataset
+    roi = source.roi
+
+    quality = result.metrics.depth_quality
+    temporal = result.metrics.temporal_noise
+    measured = result.metrics.measured_depth
+
+    return {
+        "dataset": {
+            "experiment": source.experiment_name,
+            "path": _summary_path(source.dataset_path),
+            "num_frames": int(dataset.num_frames),
+            "width": int(dataset.width),
+            "height": int(dataset.height),
+        },
+        "roi": {
+            "key": source.roi_key,
+            "config": _summary_path(source.roi_path),
+            "x": roi.x,
+            "y": roi.y,
+            "width": roi.width,
+            "height": roi.height,
+            "pixel_count": roi.pixel_count,
+        },
+        "depth_preprocessing": {
+            "excluded_raw_values": [
+                0,
+                int(np.iinfo(np.uint16).max),
+            ],
+            "depth_scale_to_mm": 1.0,
+        },
+        "depth_quality": {
+            "zero_ratio": _finite_or_none(quality.zero_ratio),
+            "max_uint16": {
+                "ratio": _finite_or_none(quality.max_uint16_ratio),
+                "affected_frames": quality.max_uint16_affected_frames,
+                "max_pixels_per_frame": (
+                    quality.max_uint16_max_pixels_per_frame
+                ),
+            },
+        },
+        "temporal_noise": {
+            "min_valid_ratio": float(result.min_valid_ratio),
+            "median_std_mm": _finite_or_none(temporal.median_std),
+            "mean_std_mm": _finite_or_none(temporal.mean_std),
+            "p95_std_mm": _finite_or_none(temporal.p95_std),
+        },
+        "measured_depth": {
+            "median_mm": _finite_or_none(measured.median_depth),
+            "mean_mm": _finite_or_none(measured.mean_depth),
+            "std_mm": _finite_or_none(measured.std_depth),
+            "p05_mm": _finite_or_none(measured.p05_depth),
+            "p95_mm": _finite_or_none(measured.p95_depth),
+        },
+    }
+
+
 def analyze_baseline(
     dataset_dir: Path,
     roi_root: Path = DEFAULT_ROI_ROOT,
@@ -174,4 +254,5 @@ def analyze_baseline(
     return BaselineAnalysisResult(
         source=baseline_input,
         metrics=metrics_results,
+        min_valid_ratio=float(min_valid_ratio),
     )

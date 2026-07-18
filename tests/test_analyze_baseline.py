@@ -9,6 +9,7 @@ from src.io.dataset import DepthDataset
 from src.preprocessing.roi import RectROI, save_roi
 from tools.analyze_baseline import (
     analyze_baseline,
+    build_summary,
     compute_baseline_metrics,
     load_baseline_input,
 )
@@ -189,3 +190,93 @@ def test_analyze_baseline_loads_input_and_computes_metrics(
         [[np.nan, 2.0, np.nan]],
         equal_nan=True,
     )
+
+
+def test_build_summary_contains_dataset_roi_and_metrics(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    dataset_path = _write_dataset(dataset_dir, depth)
+    roi_path = _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+
+    summary = build_summary(result)
+
+    assert summary["dataset"] == {
+        "experiment": EXPERIMENT_NAME,
+        "path": str(dataset_path.resolve()),
+        "num_frames": 2,
+        "width": 3,
+        "height": 1,
+    }
+    assert summary["roi"] == {
+        "key": ROI_KEY,
+        "config": str(roi_path.resolve()),
+        "x": 0,
+        "y": 0,
+        "width": 3,
+        "height": 1,
+        "pixel_count": 3,
+    }
+    assert summary["depth_preprocessing"] == {
+        "excluded_raw_values": [0, 65535],
+        "depth_scale_to_mm": 1.0,
+    }
+    assert summary["depth_quality"] == {
+        "zero_ratio": pytest.approx(1 / 6),
+        "max_uint16": {
+            "ratio": pytest.approx(1 / 6),
+            "affected_frames": 1,
+            "max_pixels_per_frame": 1,
+        },
+    }
+    assert summary["temporal_noise"] == {
+        "min_valid_ratio": 0.9,
+        "median_std_mm": 2.0,
+        "mean_std_mm": 2.0,
+        "p95_std_mm": 2.0,
+    }
+    assert summary["measured_depth"] == {
+        "median_mm": 15.0,
+        "mean_mm": 15.0,
+        "std_mm": 5.0,
+        "p05_mm": pytest.approx(10.5),
+        "p95_mm": pytest.approx(19.5),
+    }
+
+
+def test_build_summary_converts_undefined_metrics_to_none(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.zeros((2, 1, 2), dtype=np.uint16)
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=2, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+
+    summary = build_summary(result)
+
+    assert summary["depth_quality"]["zero_ratio"] == 1.0
+    assert summary["temporal_noise"]["median_std_mm"] is None
+    assert summary["temporal_noise"]["mean_std_mm"] is None
+    assert summary["temporal_noise"]["p95_std_mm"] is None
+    assert summary["measured_depth"]["median_mm"] is None
+    assert summary["measured_depth"]["mean_mm"] is None
+    assert summary["measured_depth"]["std_mm"] is None
+    assert summary["measured_depth"]["p05_mm"] is None
+    assert summary["measured_depth"]["p95_mm"] is None
