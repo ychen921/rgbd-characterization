@@ -8,6 +8,7 @@ import pytest
 from src.io.dataset import DepthDataset
 from src.preprocessing.roi import RectROI, save_roi
 from tools.analyze_baseline import (
+    analyze_baseline,
     compute_baseline_metrics,
     load_baseline_input,
 )
@@ -157,3 +158,34 @@ def test_load_baseline_input_rejects_empty_dataset(
 
     with pytest.raises(ValueError, match="contains no depth frames"):
         load_baseline_input(dataset_dir, roi_root)
+
+
+def test_analyze_baseline_loads_input_and_computes_metrics(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+
+    result = analyze_baseline(dataset_dir, roi_root)
+
+    assert result.source.experiment_name == EXPERIMENT_NAME
+    assert result.source.raw_roi.dtype == np.uint16
+    assert result.metrics.depth_quality.zero_ratio == pytest.approx(1 / 6)
+    assert result.metrics.measured_depth.median_depth == pytest.approx(15.0)
+    np.testing.assert_allclose(
+        result.metrics.temporal_noise.std_map,
+        [[np.nan, 2.0, np.nan]],
+        equal_nan=True,
+    )

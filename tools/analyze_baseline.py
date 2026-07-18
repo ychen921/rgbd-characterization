@@ -57,6 +57,14 @@ class BaselineMetricResults:
     measured_depth: MeasuredDepthResult
 
 
+@dataclass(frozen=True)
+class BaselineAnalysisResult:
+    """Store loaded input metadata and computed baseline metrics."""
+
+    source: BaselineInput
+    metrics: BaselineMetricResults
+
+
 def compute_baseline_metrics(
     raw_roi: np.ndarray,
     min_valid_ratio: float = DEFAULT_MIN_VALID_RATIO,
@@ -142,4 +150,28 @@ def load_baseline_input(
         dataset=dataset,
         roi=roi,
         raw_roi=raw_roi,
+    )
+
+def analyze_baseline(
+    dataset_dir: Path,
+    roi_root: Path = DEFAULT_ROI_ROOT,
+    min_valid_ratio: float = DEFAULT_MIN_VALID_RATIO,
+) -> BaselineAnalysisResult:
+    """Load one baseline dataset and compute all ROI metrics."""
+
+    # Load the dataset and selected ROI
+    baseline_input = load_baseline_input(
+        dataset_dir=dataset_dir,
+        roi_root=roi_root,
+    )
+
+    # Compute all baseline metrics
+    metrics_results = compute_baseline_metrics(
+        raw_roi=baseline_input.raw_roi,
+        min_valid_ratio=min_valid_ratio,
+    )
+
+    return BaselineAnalysisResult(
+        source=baseline_input,
+        metrics=metrics_results,
     )
