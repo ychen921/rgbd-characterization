@@ -15,6 +15,7 @@ from tools.analyze_baseline import (
     compute_baseline_metrics,
     load_baseline_input,
     save_frame_median_csv,
+    save_metric_maps,
     save_summary,
 )
 
@@ -396,3 +397,96 @@ def test_save_frame_median_csv_rejects_existing_file(
         ["frame_index", "timestamp_ns", "median_depth_mm"],
         ["0", "0", "11.0"],
     ]
+
+
+def test_save_metric_maps_writes_expected_npy_arrays(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    output_dir = tmp_path / "results" / EXPERIMENT_NAME / "baseline"
+
+    save_metric_maps(output_dir, result)
+
+    temporal_std = np.load(
+        output_dir / "temporal_std.npy",
+        allow_pickle=False,
+    )
+    zero_ratio = np.load(
+        output_dir / "zero_ratio_map.npy",
+        allow_pickle=False,
+    )
+    max_uint16_ratio = np.load(
+        output_dir / "max_uint16_ratio_map.npy",
+        allow_pickle=False,
+    )
+
+    np.testing.assert_allclose(
+        temporal_std,
+        [[np.nan, 2.0, np.nan]],
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        zero_ratio,
+        [[0.5, 0.0, 0.0]],
+    )
+    np.testing.assert_allclose(
+        max_uint16_ratio,
+        [[0.0, 0.0, 0.5]],
+    )
+    assert temporal_std.shape == (1, 3)
+    assert temporal_std.dtype == np.float64
+    assert zero_ratio.dtype == np.float64
+    assert max_uint16_ratio.dtype == np.float64
+
+
+def test_save_metric_maps_checks_all_conflicts_before_writing(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    output_dir = tmp_path / "results" / EXPERIMENT_NAME / "baseline"
+    output_dir.mkdir(parents=True)
+    existing_path = output_dir / "zero_ratio_map.npy"
+    with existing_path.open("xb") as stream:
+        np.save(
+            stream,
+            np.array([[99.0]], dtype=np.float64),
+            allow_pickle=False,
+        )
+
+    with pytest.raises(FileExistsError, match="zero_ratio_map.npy"):
+        save_metric_maps(output_dir, result)
+
+    assert not (output_dir / "temporal_std.npy").exists()
+    assert not (output_dir / "max_uint16_ratio_map.npy").exists()
+    np.testing.assert_array_equal(
+        np.load(existing_path, allow_pickle=False),
+        [[99.0]],
+    )

@@ -325,6 +325,77 @@ def save_frame_median_csv(
             )
 
 
+def save_metric_maps(
+    output_dir: Path,
+    result: BaselineAnalysisResult,
+) -> None:
+    """Save baseline per-pixel metric maps without overwriting."""
+
+    # Extract metric maps from the analysis result
+    temporal_std = result.metrics.temporal_noise.std_map
+    zero_ratio = result.metrics.depth_quality.zero_ratio_map
+    max_uint16_ratio = (
+        result.metrics.depth_quality.max_uint16_ratio_map
+    )
+
+    # Validate shapes before creating the files
+    expected_shape = (
+        result.source.roi.height,
+        result.source.roi.width,
+    )
+    maps = {
+        "temporal_std.npy": temporal_std,
+        "zero_ratio_map.npy": zero_ratio,
+        "max_uint16_ratio_map.npy": max_uint16_ratio,
+    }
+    for filename, array in maps.items():
+        if array.shape != expected_shape:
+            raise ValueError(
+                f"{filename} must have shape {expected_shape}; "
+                f"got shape {array.shape}"
+            )
+
+    # Check for conflicting outputs before writing any map.
+    output_dir = Path(output_dir).expanduser()
+
+    output_paths = {
+        filename: output_dir / filename
+        for filename in maps
+    }
+
+    existing_paths = [
+        path
+        for path in output_paths.values()
+        if path.exists()
+    ]
+
+    # Raise an error if any of the output files already exist
+    if existing_paths:
+        existing = ", ".join(
+            str(path)
+            for path in existing_paths
+        )
+        raise FileExistsError(
+            f"Metric map output already exists: {existing}"
+        )
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for filename, array in maps.items():
+        output_path = output_paths[filename]
+
+        with output_path.open(
+            "xb",
+        ) as stream:
+            np.save(
+                stream,
+                array,
+                allow_pickle=False,
+            )
+
 
 def analyze_baseline(
     dataset_dir: Path,
