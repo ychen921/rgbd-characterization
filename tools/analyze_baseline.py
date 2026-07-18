@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
@@ -230,6 +231,30 @@ def build_summary(
             "p95_mm": _finite_or_none(measured.p95_depth),
         },
     }
+
+
+def save_summary(
+    path: Path,
+    summary: dict[str, object],
+) -> None:
+    """Save one baseline summary as YAML without overwriting."""
+    
+    summary_path = Path(path).expanduser()
+    summary_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with summary_path.open(
+        "x",
+        encoding="utf-8",
+    ) as stream:
+        yaml.safe_dump(
+            summary,
+            stream,
+            sort_keys=False,
+            allow_unicode=True,
+        )
 
 
 def analyze_baseline(

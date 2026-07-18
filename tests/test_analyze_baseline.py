@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 from src.io.dataset import DepthDataset
 from src.preprocessing.roi import RectROI, save_roi
@@ -12,6 +13,7 @@ from tools.analyze_baseline import (
     build_summary,
     compute_baseline_metrics,
     load_baseline_input,
+    save_summary,
 )
 
 
@@ -280,3 +282,47 @@ def test_build_summary_converts_undefined_metrics_to_none(
     assert summary["measured_depth"]["std_mm"] is None
     assert summary["measured_depth"]["p05_mm"] is None
     assert summary["measured_depth"]["p95_mm"] is None
+
+
+def test_save_summary_creates_parent_and_writes_yaml(
+    tmp_path: Path,
+) -> None:
+    summary_path = (
+        tmp_path
+        / "results"
+        / EXPERIMENT_NAME
+        / "baseline"
+        / "summary.yaml"
+    )
+    summary = {
+        "dataset": {
+            "experiment": EXPERIMENT_NAME,
+        },
+        "measured_depth": {
+            "median_mm": None,
+        },
+    }
+
+    save_summary(summary_path, summary)
+
+    with summary_path.open("r", encoding="utf-8") as stream:
+        loaded = yaml.safe_load(stream)
+
+    assert loaded == summary
+
+
+def test_save_summary_rejects_existing_file(
+    tmp_path: Path,
+) -> None:
+    summary_path = tmp_path / "summary.yaml"
+    original = {"value": 1}
+
+    save_summary(summary_path, original)
+
+    with pytest.raises(FileExistsError):
+        save_summary(summary_path, {"value": 2})
+
+    with summary_path.open("r", encoding="utf-8") as stream:
+        loaded = yaml.safe_load(stream)
+
+    assert loaded == original
