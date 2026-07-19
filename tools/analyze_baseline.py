@@ -235,12 +235,12 @@ def build_summary(
 
 
 def save_summary(
-    path: Path,
+    summary_path: Path,
     summary: dict[str, object],
 ) -> None:
     """Save one baseline summary as YAML without overwriting."""
-    
-    summary_path = Path(path).expanduser()
+
+    summary_path = Path(summary_path).expanduser()
     summary_path.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -264,7 +264,7 @@ def save_frame_median_csv(
     result: BaselineAnalysisResult,
 ) -> None:
     """Save timestamp-aligned per-frame median depth values."""
-    
+
     csv_path = Path(csv_path).expanduser()
 
     timestamps_ns = result.source.dataset.timestamps_ns
@@ -285,7 +285,7 @@ def save_frame_median_csv(
         raise ValueError(
             "Timestamp and frame-median counts do not match"
         )
-    
+
     csv_path.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -395,6 +395,59 @@ def save_metric_maps(
                 array,
                 allow_pickle=False,
             )
+
+
+def save_baseline_analysis(
+    output_dir: Path,
+    result: BaselineAnalysisResult,
+) -> Path:
+    """Save all artifacts for one completed baseline analysis."""
+
+    output_dir = Path(output_dir).expanduser()
+    artifact_paths = [
+        output_dir / "summary.yaml",
+        output_dir / "frame_median_depth.csv",
+        output_dir / "temporal_std.npy",
+        output_dir / "zero_ratio_map.npy",
+        output_dir / "max_uint16_ratio_map.npy",
+    ]
+
+    # Add existing paths to a list
+    existing_paths = [
+        path
+        for path in artifact_paths
+        if path.exists()
+    ]
+
+    # Raise an error if any of the output files already exist
+    if existing_paths:
+        existing = ", ".join(
+            str(path)
+            for path in existing_paths
+        )
+        raise FileExistsError(
+            f"Baseline output already exists: {existing}"
+        )
+
+    # Save all artifacts for the baseline analysis
+    summary = build_summary(result=result)
+
+    save_frame_median_csv(
+        csv_path=output_dir / "frame_median_depth.csv",
+        result=result,
+    )
+
+    save_metric_maps(
+        output_dir=output_dir,
+        result=result,
+    )
+
+    save_summary(
+        summary_path=output_dir / "summary.yaml",
+        summary=summary,
+    )
+
+    return output_dir
 
 
 def analyze_baseline(

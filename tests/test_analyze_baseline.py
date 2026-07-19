@@ -14,6 +14,7 @@ from tools.analyze_baseline import (
     build_summary,
     compute_baseline_metrics,
     load_baseline_input,
+    save_baseline_analysis,
     save_frame_median_csv,
     save_metric_maps,
     save_summary,
@@ -490,3 +491,77 @@ def test_save_metric_maps_checks_all_conflicts_before_writing(
         np.load(existing_path, allow_pickle=False),
         [[99.0]],
     )
+
+
+def test_save_baseline_analysis_writes_all_artifacts(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    output_dir = tmp_path / "results" / EXPERIMENT_NAME / "baseline"
+
+    saved_dir = save_baseline_analysis(output_dir, result)
+
+    assert saved_dir == output_dir
+    assert {
+        path.name
+        for path in output_dir.iterdir()
+    } == {
+        "summary.yaml",
+        "frame_median_depth.csv",
+        "temporal_std.npy",
+        "zero_ratio_map.npy",
+        "max_uint16_ratio_map.npy",
+    }
+    with (output_dir / "summary.yaml").open(
+        "r",
+        encoding="utf-8",
+    ) as stream:
+        summary = yaml.safe_load(stream)
+    assert summary["dataset"]["experiment"] == EXPERIMENT_NAME
+
+    temporal_std = np.load(
+        output_dir / "temporal_std.npy",
+        allow_pickle=False,
+    )
+    assert temporal_std.shape == (1, 3)
+
+
+def test_save_baseline_analysis_checks_all_conflicts_before_writing(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    depth = np.array([[[10, 12]]], dtype=np.uint16)
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=2, height=1),
+    )
+    result = analyze_baseline(dataset_dir, roi_root)
+    output_dir = tmp_path / "results" / EXPERIMENT_NAME / "baseline"
+    output_dir.mkdir(parents=True)
+    summary_path = output_dir / "summary.yaml"
+    summary_path.write_text("existing: true\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="summary.yaml"):
+        save_baseline_analysis(output_dir, result)
+
+    assert summary_path.read_text(encoding="utf-8") == "existing: true\n"
+    assert not (output_dir / "frame_median_depth.csv").exists()
+    assert not (output_dir / "temporal_std.npy").exists()
+    assert not (output_dir / "zero_ratio_map.npy").exists()
+    assert not (output_dir / "max_uint16_ratio_map.npy").exists()
