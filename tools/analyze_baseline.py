@@ -1,5 +1,6 @@
 """Analyze one extracted baseline depth dataset."""
 
+import argparse
 import csv
 from dataclasses import dataclass
 import sys
@@ -10,6 +11,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
+DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -66,6 +68,87 @@ class BaselineAnalysisResult:
     source: BaselineInput
     metrics: BaselineMetricResults
     min_valid_ratio: float
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for baseline analysis."""
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Analyze one extracted baseline depth dataset."
+        )
+    )
+
+    # Dataset directory
+    parser.add_argument(
+        "dataset_dir",
+        type=Path,
+        help="Experiment directory containing depth.npz.",
+    )
+
+    # ROI root directory
+    parser.add_argument(
+        "--roi-root",
+        type=Path,
+        default=DEFAULT_ROI_ROOT,
+        help="ROI configuration directory (default: config/roi).",
+    )
+
+    # Output directory
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "Artifact output directory. Defaults to "
+            "results/<experiment>/baseline."
+        ),
+    )
+
+    # Temporal threshold
+    parser.add_argument(
+        "--min-valid-ratio",
+        type=float,
+        default=DEFAULT_MIN_VALID_RATIO,
+        help="Minimum valid-frame ratio for temporal noise.",
+    )
+
+    return parser.parse_args()
+
+
+def print_completion(
+    result: BaselineAnalysisResult,
+    output_dir: Path,
+) -> None:
+    """Print a concise completed-analysis report."""
+
+    source = result.source
+    roi = source.roi
+    median_depth = result.metrics.measured_depth.median_depth
+    median_text = (
+        "undefined"
+        if not np.isfinite(median_depth)
+        else f"{median_depth:.3f} mm"
+    )
+
+    print("Baseline analysis complete.")
+    print()
+    print("Dataset:")
+    print(f"  {_summary_path(source.dataset_path)}")
+    print()
+    print("ROI:")
+    print(f"  {_summary_path(source.roi_path)}")
+    print(
+        "  rectangle: "
+        f"x={roi.x}, y={roi.y}, "
+        f"width={roi.width}, height={roi.height}"
+    )
+    print(f"  pixels: {roi.pixel_count}")
+    print()
+    print("Measured depth:")
+    print(f"  median: {median_text}")
+    print()
+    print("Saved:")
+    print(f"  {_summary_path(Path(output_dir).expanduser())}")
 
 
 def compute_baseline_metrics(
@@ -474,3 +557,51 @@ def analyze_baseline(
         metrics=metrics_results,
         min_valid_ratio=float(min_valid_ratio),
     )
+
+
+def resolve_output_dir(
+    experiment_name: str,
+    output_dir: Path | None,
+) -> Path:
+    """Resolve the baseline artifact output directory."""
+
+    if output_dir is not None:
+        return Path(output_dir).expanduser()
+
+    return (
+        DEFAULT_RESULTS_ROOT
+        / experiment_name
+        / "baseline"
+    )
+
+
+def main() -> int:
+    """Run one baseline analysis from the command line."""
+
+    args = parse_args()
+
+    result = analyze_baseline(
+        dataset_dir=args.dataset_dir,
+        roi_root=args.roi_root,
+        min_valid_ratio=args.min_valid_ratio,
+    )
+
+    output_dir = resolve_output_dir(
+        experiment_name=result.source.experiment_name,
+        output_dir=args.output_dir,
+    )
+
+    save_dir = save_baseline_analysis(
+        output_dir=output_dir,
+        result=result,
+    )
+
+    print_completion(
+        result=result,
+        output_dir=save_dir,
+    )
+
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

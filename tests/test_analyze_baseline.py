@@ -2,6 +2,7 @@
 
 import csv
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -10,10 +11,13 @@ import yaml
 from src.io.dataset import DepthDataset
 from src.preprocessing.roi import RectROI, save_roi
 from tools.analyze_baseline import (
+    DEFAULT_RESULTS_ROOT,
     analyze_baseline,
     build_summary,
     compute_baseline_metrics,
     load_baseline_input,
+    main,
+    resolve_output_dir,
     save_baseline_analysis,
     save_frame_median_csv,
     save_metric_maps,
@@ -565,3 +569,88 @@ def test_save_baseline_analysis_checks_all_conflicts_before_writing(
     assert not (output_dir / "temporal_std.npy").exists()
     assert not (output_dir / "zero_ratio_map.npy").exists()
     assert not (output_dir / "max_uint16_ratio_map.npy").exists()
+
+
+def test_resolve_output_dir_uses_default_results_location() -> None:
+    output_dir = resolve_output_dir(
+        experiment_name=EXPERIMENT_NAME,
+        output_dir=None,
+    )
+
+    assert output_dir == (
+        DEFAULT_RESULTS_ROOT
+        / EXPERIMENT_NAME
+        / "baseline"
+    )
+
+
+def test_resolve_output_dir_uses_explicit_path(tmp_path: Path) -> None:
+    explicit_output_dir = tmp_path / "custom" / "baseline"
+
+    output_dir = resolve_output_dir(
+        experiment_name=EXPERIMENT_NAME,
+        output_dir=explicit_output_dir,
+    )
+
+    assert output_dir == explicit_output_dir
+
+
+def test_main_runs_complete_cli_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dataset_dir = tmp_path / "data" / EXPERIMENT_NAME
+    roi_root = tmp_path / "config" / "roi"
+    output_dir = tmp_path / "results" / EXPERIMENT_NAME / "baseline"
+    depth = np.array(
+        [
+            [[0, 10, 65535]],
+            [[20, 14, 30]],
+        ],
+        dtype=np.uint16,
+    )
+    _write_dataset(dataset_dir, depth)
+    _write_roi(
+        roi_root,
+        RectROI(x=0, y=0, width=3, height=1),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_baseline.py",
+            str(dataset_dir),
+            "--roi-root",
+            str(roi_root),
+            "--output-dir",
+            str(output_dir),
+            "--min-valid-ratio",
+            "0.5",
+        ],
+    )
+
+    exit_code = main()
+
+    assert exit_code == 0
+    assert {
+        path.name
+        for path in output_dir.iterdir()
+    } == {
+        "summary.yaml",
+        "frame_median_depth.csv",
+        "temporal_std.npy",
+        "zero_ratio_map.npy",
+        "max_uint16_ratio_map.npy",
+    }
+    with (output_dir / "summary.yaml").open(
+        "r",
+        encoding="utf-8",
+    ) as stream:
+        summary = yaml.safe_load(stream)
+    assert summary["temporal_noise"]["min_valid_ratio"] == 0.5
+
+    captured = capsys.readouterr()
+    assert "Baseline analysis complete." in captured.out
+    assert "Saved:" in captured.out
+    assert str(output_dir) in captured.out
