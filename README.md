@@ -115,7 +115,7 @@ analysis rationale.
 Run the Python unit and integration tests from the workspace root:
 
 ```bash
-PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
 ```
 
 Disabling external pytest plugin autoload keeps system-installed ROS testing
