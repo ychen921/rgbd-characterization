@@ -10,7 +10,7 @@ Load the ROS 2 Humble environment and go to the project root:
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd ~/dev/rgbd-characterization
+cd ~/dev/orbbec_ws
 ```
 
 Run the extraction:
@@ -80,3 +80,98 @@ config/roi/scene01_white_d050.yaml
 
 If that ROI file already exists, selection is skipped without overwriting it.
 Use `--roi-root PATH` to select a different configuration directory.
+
+## `analyze_baseline.py`
+
+Analyzes one extracted white-board baseline dataset inside its configured ROI.
+The tool loads existing files only and never opens the ROI selection GUI.
+
+Before running the analysis, the experiment directory must contain:
+
+```text
+data/scene01_white_d050_r01/
+└── depth.npz
+```
+
+The shared ROI configuration must also exist:
+
+```text
+config/roi/scene01_white_d050.yaml
+```
+
+Run from the workspace root:
+
+```bash
+python3 tools/analyze_baseline.py \
+    data/scene01_white_d050_r01
+```
+
+The analysis pipeline is:
+
+```text
+depth.npz
+↓
+load shared distance-group ROI
+↓
+crop raw uint16 depth frames
+├── zero and maximum-uint16 occurrence metrics
+└── convert 0 and 65535 to NaN
+        ├── per-pixel temporal noise
+        └── per-frame measured-depth median
+↓
+save baseline artifacts
+```
+
+By default, artifacts are written to:
+
+```text
+results/scene01_white_d050_r01/baseline/
+├── summary.yaml
+├── frame_median_depth.csv
+├── temporal_std.npy
+├── zero_ratio_map.npy
+└── max_uint16_ratio_map.npy
+```
+
+`frame_median_depth.csv` contains one timestamp-aligned row per input frame:
+
+```text
+frame_index,timestamp_ns,median_depth_mm
+```
+
+An all-invalid frame keeps its row and uses an empty median-depth field. The
+three NPY files contain ROI-sized `float64` maps and preserve NaN values.
+
+Options:
+
+```text
+--roi-root PATH
+    ROI configuration directory. Defaults to config/roi.
+
+--output-dir PATH
+    Artifact output directory. Defaults to
+    results/<experiment>/baseline.
+
+--min-valid-ratio FLOAT
+    Minimum valid-frame ratio for each temporal-noise pixel. Defaults to 0.9.
+```
+
+Example with explicit paths:
+
+```bash
+python3 tools/analyze_baseline.py \
+    data/scene01_white_d050_r01 \
+    --roi-root config/roi \
+    --output-dir results/scene01_white_d050_r01/baseline \
+    --min-valid-ratio 0.9
+```
+
+The analysis is non-overwriting. If any planned artifact already exists, the
+tool fails before writing new output files. If the ROI configuration is
+missing, run `select_roi.py` first.
+
+Show the CLI help:
+
+```bash
+python3 tools/analyze_baseline.py --help
+```
