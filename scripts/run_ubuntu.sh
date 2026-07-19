@@ -2,8 +2,11 @@
 set -e
 
 IMAGE_NAME="ros2-humble:latest"
-CONTAINER_NAME="ros2-humble-orbbec-ubuntu"
-WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONTAINER_NAME="rgbd-characterization-ubuntu"
+RGBD_CHARACTERIZATION_ROOT="${RGBD_CHARACTERIZATION_ROOT:-$(
+  cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
+)}"
+CONTAINER_WORKSPACE="/workspaces/rgbd-characterization"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 HOST_USER="$(id -un)"
@@ -28,13 +31,13 @@ docker run -it --rm \
   -e ROS_DOMAIN_ID=30 \
   -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   -e ROS_LOCALHOST_ONLY=0 \
-  -e FASTRTPS_DEFAULT_PROFILES_FILE=/workspaces/orbbec_ws/config/fastdds_udp_only.xml \
-  -e FASTDDS_DEFAULT_PROFILES_FILE=/workspaces/orbbec_ws/config/fastdds_udp_only.xml \
-  -v "${WS}:/workspaces/orbbec_ws" \
-  -v "${WS}/bags:/bags" \
-  -v "${WS}/data:/data" \
-  -v "${WS}/results:/results" \
+  -e FASTRTPS_DEFAULT_PROFILES_FILE="${CONTAINER_WORKSPACE}/config/fastdds_udp_only.xml" \
+  -e FASTDDS_DEFAULT_PROFILES_FILE="${CONTAINER_WORKSPACE}/config/fastdds_udp_only.xml" \
+  -v "${RGBD_CHARACTERIZATION_ROOT}:${CONTAINER_WORKSPACE}" \
+  -v "${RGBD_CHARACTERIZATION_ROOT}/bags:/bags" \
+  -v "${RGBD_CHARACTERIZATION_ROOT}/data:/data" \
+  -v "${RGBD_CHARACTERIZATION_ROOT}/results:/results" \
   -v "${CONTAINER_HOME}:/home/${HOST_USER}" \
-  -w /workspaces/orbbec_ws \
+  -w "${CONTAINER_WORKSPACE}" \
   "${IMAGE_NAME}" \
   bash

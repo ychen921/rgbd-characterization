@@ -10,7 +10,7 @@ Load the ROS 2 Humble environment and go to the project root:
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd ~/dev/orbbec_ws
+cd ~/dev/rgbd-characterization
 ```
 
 Run the extraction:

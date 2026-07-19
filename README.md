@@ -1,4 +1,4 @@
-# Orbbec ROS2 Workspace
+# [rgbd-characterization](https://github.com/ychen921/rgbd-characterization)
 
 This workspace supports RGB-D camera operation and reproducible depth-sensor
 characterization. The characterization pipeline extracts depth frames from
@@ -8,7 +8,7 @@ saves inspectable artifacts for later comparison.
 Current workspace path:
 
 ```bash
-~/dev/orbbec_ws
+~/dev/rgbd-characterization
 ```
 
 ---
@@ -19,7 +19,7 @@ The structure below focuses on the baseline characterization workflow. Folder
 purposes are included directly in the tree to keep the overview compact.
 
 ```text
-orbbec_ws/
+rgbd-characterization/
 ├── bags/                    # Raw experiment recordings
 ├── config/
 │   └── roi/                 # Shared ROI YAML grouped by scene/target/distance
@@ -150,7 +150,7 @@ Next:
 Before using ROS2 commands on the host machine, source the workspace environment script:
 
 ```bash
-cd ~/dev/orbbec_ws
+cd ~/dev/rgbd-characterization
 source scripts/host_orbbec_env.sh
 ```
 
@@ -176,7 +176,7 @@ echo $FASTDDS_DEFAULT_PROFILES_FILE
 From host Ubuntu or from the Docker container:
 
 ```bash
-cd ~/dev/orbbec_ws
+cd ~/dev/rgbd-characterization
 source /opt/ros/humble/setup.bash
 colcon build
 ```
@@ -201,7 +201,7 @@ ros2 pkg prefix orbbec_camera
 After sourcing the environment:
 
 ```bash
-cd ~/dev/orbbec_ws
+cd ~/dev/rgbd-characterization
 source scripts/host_orbbec_env.sh
 ros2 launch orbbec_camera gemini_330_series.launch.py
 ```
@@ -240,8 +240,8 @@ Common Orbbec topics:
 Start the Ubuntu container:
 
 ```bash
-cd ~/dev/orbbec_ws/scripts
-./run_ubuntu.sh
+cd ~/dev/rgbd-characterization
+./scripts/run_ubuntu.sh
 ```
 
 ---
@@ -257,8 +257,8 @@ config/fastdds_udp_only.xml
 Environment variables:
 
 ```bash
-export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/dev/orbbec_ws/config/fastdds_udp_only.xml
-export FASTDDS_DEFAULT_PROFILES_FILE=$HOME/dev/orbbec_ws/config/fastdds_udp_only.xml
+export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/dev/rgbd-characterization/config/fastdds_udp_only.xml
+export FASTDDS_DEFAULT_PROFILES_FILE=$HOME/dev/rgbd-characterization/config/fastdds_udp_only.xml
 ```
 
 This is used to keep ROS2 communication consistent between host and container.

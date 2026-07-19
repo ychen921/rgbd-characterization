@@ -6,8 +6,10 @@ set -euo pipefail
 # Orbbec sensor characterization experiment recorder
 # ============================================================
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/dev/orbbec_ws}"
-BAG_ROOT="${BAG_ROOT:-${WORKSPACE_DIR}/bags}"
+RGBD_CHARACTERIZATION_ROOT="${RGBD_CHARACTERIZATION_ROOT:-$(
+    cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
+)}"
+BAG_ROOT="${BAG_ROOT:-${RGBD_CHARACTERIZATION_ROOT}/bags}"
 
 SENSOR_MODEL="Orbbec Gemini 335L"
 SENSOR_SERIAL="unknown"

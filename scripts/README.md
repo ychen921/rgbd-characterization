@@ -1,4 +1,4 @@
-# scripts
+# rgbd-characterization scripts
 
 This document describes the shell scripts under `scripts/` and how to use them.
 
@@ -16,12 +16,14 @@ The repository includes these helper scripts:
 
 ### Purpose
 
-Starts a Docker container named `ros2-humble-orbbec-ubuntu` with the workspace mounted and device access enabled.
+Starts a Docker container named `rgbd-characterization-ubuntu` with the
+repository mounted and device access enabled.
 
 ### Behavior
 
 - Uses Docker image `ros2-humble:latest`
-- Mounts the local workspace directory from `$HOME/dev/orbbec_ws` into `/workspaces/orbbec_ws`
+- Resolves the repository root from the script location by default
+- Mounts the repository into `/workspaces/rgbd-characterization`
 - Mounts `/bags`, `/data`, and `/results` directories from the workspace
 - Shares host network, IPC, and device access
 - Sets ROS environment variables inside the container
@@ -37,7 +39,7 @@ From the repository root:
 
 ### Notes
 
-- The script currently hardcodes `ORBBEC_WS="$HOME/dev/orbbec_ws"`.
+- `RGBD_CHARACTERIZATION_ROOT` can override the repository root when needed.
 - It expects Docker to be installed and the image `ros2-humble:latest` available locally.
 
 ---
@@ -68,7 +70,10 @@ source scripts/host_orbbec_env.sh
 
 ### Notes
 
-- The profile file path is hardcoded to `$HOME/dev/orbbec_ws/config/fastdds_udp_only.xml`.
+- `RGBD_CHARACTERIZATION_ROOT` defaults to the repository root resolved from
+  the script location.
+- The Fast DDS profile paths are derived from
+  `${RGBD_CHARACTERIZATION_ROOT}/config/fastdds_udp_only.xml`.
 
 ---
 
@@ -80,8 +85,10 @@ Creates an experiment directory with YAML metadata and records a ROS bag of Orbb
 
 ### Environment
 
-- `WORKSPACE_DIR` can be overridden externally. Defaults to `$HOME/dev/orbbec_ws`.
-- `BAG_ROOT` can be overridden externally. Defaults to `${WORKSPACE_DIR}/bags`.
+- `RGBD_CHARACTERIZATION_ROOT` can be overridden externally. It defaults to
+  the repository root resolved from the script location.
+- `BAG_ROOT` can be overridden externally. It defaults to
+  `${RGBD_CHARACTERIZATION_ROOT}/bags`.
 - Requires the `ros2` command to be available in the environment.
 
 ### Required arguments
