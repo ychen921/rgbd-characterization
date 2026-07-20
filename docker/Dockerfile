@@ -88,28 +88,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopencv-dev \
     libpcl-dev \
     pcl-tools \
-    python3-opencv \
-    python3-numpy \
-    python3-scipy \
-    python3-matplotlib \
-    python3-yaml \
-    python3-tqdm \
     && rm -rf /var/lib/apt/lists/*
 
 # ------------------------------------------------------------
-# Python perception / data analysis packages
+# Isolated Python environment for project tools
 #
-# Jammy's python3-opencv and python3-matplotlib are compiled against the
-# NumPy 1.x ABI. Install NumPy 2-compatible wheels into /usr/local so the
-# project tools do not load those system Python extensions with NumPy 2.
+# Keep project packages separate from Ubuntu Python extensions compiled
+# against the NumPy 1.x ABI. ROS Python packages remain available through
+# the paths configured by /opt/ros/humble/setup.bash.
 # ------------------------------------------------------------
-RUN pip3 install --no-cache-dir \
-    "numpy==2.2.6" \
-    "opencv-python==4.12.0.88" \
-    matplotlib \
-    scikit-learn \
-    pandas \
-    open3d
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+RUN python3 -m venv "${VIRTUAL_ENV}" && \
+    "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    "${VIRTUAL_ENV}/bin/python3" -m pip install --no-cache-dir \
+        "numpy==1.26.4" \
+        "matplotlib==3.8.4" \
+        "opencv-python==4.10.0.84" \
+        "scipy==1.13.1" \
+        "scikit-learn==1.5.2" \
+        "pandas==2.2.3" \
+        "open3d==0.18.0" \
+        "PyYAML==6.0.2" \
+        "tqdm==4.67.1" && \
+    "${VIRTUAL_ENV}/bin/python3" -c "import cv2, matplotlib, numpy; print(numpy.__version__, matplotlib.__version__, cv2.__version__)"
 
 # ------------------------------------------------------------
 # Shell setup
