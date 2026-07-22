@@ -8,6 +8,7 @@ import yaml
 
 from src.geometry.camera import (
     CameraIntrinsics,
+    depth_roi_to_points,
     load_camera_intrinsics,
     validate_depth_resolution,
 )
@@ -35,6 +36,19 @@ def _camera_info_document() -> dict[str, object]:
 def _write_camera_info(path: Path, document: object) -> None:
     with path.open("w", encoding="utf-8") as stream:
         yaml.safe_dump(document, stream)
+
+
+@pytest.fixture
+def simple_intrinsics() -> CameraIntrinsics:
+    return CameraIntrinsics(
+        width=5,
+        height=4,
+        fx=100.0,
+        fy=100.0,
+        cx=2.0,
+        cy=1.0,
+        frame_id="camera_depth_optical_frame",
+    )
 
 
 def test_load_project_depth_camera_info() -> None:
@@ -136,3 +150,194 @@ def test_project_dataset_resolution_matches_calibration() -> None:
         allow_pickle=False,
     ) as archive:
         validate_depth_resolution(archive["depth"], intrinsics)
+
+
+def test_depth_roi_to_points_back_projects_principal_point(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.array([[1000.0]], dtype=np.float32)
+
+    points = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=2,
+        roi_y=1,
+    )
+
+    assert points.shape == (1, 3)
+    assert points.dtype == np.float64
+    assert np.allclose(points, [[0.0, 0.0, 1.0]])
+
+
+def test_depth_roi_to_points_computes_expected_coordinates(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.array([[2000.0]], dtype=np.float32)
+
+    points = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=3,
+        roi_y=2,
+    )
+
+    assert np.allclose(points, [[0.02, 0.02, 2.0]])
+
+
+def test_depth_roi_to_points_applies_roi_offset(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.array([[1000.0]], dtype=np.float32)
+
+    without_offset = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=0,
+        roi_y=0,
+    )
+    with_offset = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=2,
+        roi_y=1,
+    )
+
+    assert np.allclose(without_offset, [[-0.02, -0.01, 1.0]])
+    assert np.allclose(with_offset, [[0.0, 0.0, 1.0]])
+
+
+def test_depth_roi_to_points_excludes_invalid_depth_and_preserves_order(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.array(
+        [
+            [1000.0, np.nan, 2000.0],
+            [np.inf, 0.0, -1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    points = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=0,
+        roi_y=0,
+    )
+
+    assert points.shape == (2, 3)
+    assert np.all(np.isfinite(points))
+    assert np.allclose(
+        points,
+        [
+            [-0.02, -0.01, 1.0],
+            [0.0, -0.02, 2.0],
+        ],
+    )
+
+
+def test_depth_roi_to_points_returns_empty_array_for_no_valid_depth(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.full((2, 2), np.nan, dtype=np.float32)
+
+    points = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=0,
+        roi_y=0,
+    )
+
+    assert points.shape == (0, 3)
+    assert points.dtype == np.float64
+
+
+def test_depth_roi_to_points_rejects_non_array_input(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    with pytest.raises(TypeError, match="numpy.ndarray"):
+        depth_roi_to_points(
+            [[1000.0]],
+            simple_intrinsics,
+            roi_x=0,
+            roi_y=0,
+        )
+
+
+def test_depth_roi_to_points_rejects_frame_sequence(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.zeros((2, 4, 5), dtype=np.float32)
+
+    with pytest.raises(ValueError, match=r"shape \(H, W\)"):
+        depth_roi_to_points(
+            depth_mm,
+            simple_intrinsics,
+            roi_x=0,
+            roi_y=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("roi_x", "roi_y", "expected_message"),
+    [
+        (-1, 0, "roi_x must be non-negative"),
+        (0, -1, "roi_y must be non-negative"),
+        (1.5, 0, "roi_x must be an integer"),
+        (0, True, "roi_y must be an integer"),
+    ],
+)
+def test_depth_roi_to_points_rejects_invalid_roi_origin(
+    simple_intrinsics: CameraIntrinsics,
+    roi_x: object,
+    roi_y: object,
+    expected_message: str,
+) -> None:
+    depth_mm = np.ones((1, 1), dtype=np.float32)
+
+    with pytest.raises(ValueError, match=expected_message):
+        depth_roi_to_points(
+            depth_mm,
+            simple_intrinsics,
+            roi_x=roi_x,
+            roi_y=roi_y,
+        )
+
+
+@pytest.mark.parametrize(
+    ("shape", "roi_x", "roi_y", "expected_message"),
+    [
+        ((1, 2), 4, 0, "image width"),
+        ((2, 1), 0, 3, "image height"),
+    ],
+)
+def test_depth_roi_to_points_rejects_out_of_bounds_roi(
+    simple_intrinsics: CameraIntrinsics,
+    shape: tuple[int, int],
+    roi_x: int,
+    roi_y: int,
+    expected_message: str,
+) -> None:
+    depth_mm = np.ones(shape, dtype=np.float32)
+
+    with pytest.raises(ValueError, match=expected_message):
+        depth_roi_to_points(
+            depth_mm,
+            simple_intrinsics,
+            roi_x=roi_x,
+            roi_y=roi_y,
+        )
+
+
+def test_depth_roi_to_points_accepts_roi_touching_image_boundaries(
+    simple_intrinsics: CameraIntrinsics,
+) -> None:
+    depth_mm = np.full((2, 2), 1000.0, dtype=np.float32)
+
+    points = depth_roi_to_points(
+        depth_mm,
+        simple_intrinsics,
+        roi_x=3,
+        roi_y=2,
+    )
+
+    assert points.shape == (4, 3)

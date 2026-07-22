@@ -139,3 +139,79 @@ def _require_number(value: Any, field_name: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ValueError(f"{field_name} must be a number")
     return float(value)
+
+
+def depth_roi_to_points(
+    depth_mm: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    roi_x: int,
+    roi_y: int,
+) -> np.ndarray:
+    """Back-project one prepared depth ROI into camera-space 3D points."""
+    if not isinstance(depth_mm, np.ndarray):
+        raise TypeError(
+            "depth_mm must be a numpy.ndarray; "
+            f"got {type(depth_mm).__name__}"
+        )
+
+    if depth_mm.ndim != 2:
+        raise ValueError(
+            "depth_mm must have shape (H, W); "
+            f"got shape {depth_mm.shape}"
+        )
+
+    if not isinstance(intrinsics, CameraIntrinsics):
+        raise TypeError(
+            "intrinsics must be CameraIntrinsics; "
+            f"got {type(intrinsics).__name__}"
+        )
+
+    for field_name, value in (
+        ("roi_x", roi_x),
+        ("roi_y", roi_y),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{field_name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{field_name} must be non-negative")
+
+    roi_height, roi_width = depth_mm.shape
+
+    if roi_x + roi_width > intrinsics.width:
+        raise ValueError("Depth ROI exceeds calibrated image width")
+
+    if roi_y + roi_height > intrinsics.height:
+        raise ValueError("Depth ROI exceeds calibrated image height")
+
+    # Build local pixel coordinates for every sample in the cropped ROI.
+    v_local, u_local = np.indices(
+        (roi_height, roi_width),
+        dtype=np.float64,
+    )
+
+    # Restore full-image coordinates before applying the camera intrinsics.
+    u = u_local + roi_x
+    v = v_local + roi_y
+
+    # Camera-space geometry uses metres; prepared invalid samples remain NaN.
+    z = depth_mm.astype(
+        np.float64,
+        copy=False,
+    ) / 1000.0
+
+    # Back-project only finite, physically meaningful depth samples.
+    valid = np.isfinite(z) & (z > 0.0)
+
+    x = (
+        (u[valid] - intrinsics.cx)
+        * z[valid]
+        / intrinsics.fx
+    )
+    y = (
+        (v[valid] - intrinsics.cy)
+        * z[valid]
+        / intrinsics.fy
+    )
+
+    # Preserve row-major pixel order and return one XYZ point per valid pixel.
+    return np.column_stack((x, y, z[valid]))
