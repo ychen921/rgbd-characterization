@@ -35,7 +35,7 @@ The extraction pipeline has been completed and tested:
 ```text
 rosbag
 ↓
-extract_data.py
+extract_dataset.py
 ↓
 depth.npz
 ↓
@@ -87,7 +87,7 @@ scene01_white_d050_r02
 scene01_white_d050_r03
              │
              ▼
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 Another distance uses another ROI:
@@ -97,7 +97,7 @@ scene01_white_d100_r01
 scene01_white_d100_r02
              │
              ▼
-config/roi/baseline/scene01_white_d100.yaml
+config/roi/scene01_white_d100.yaml
 ```
 
 Therefore:
@@ -173,7 +173,7 @@ Example:
 
 ```text
 ROI configuration not found:
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 
 Run:
 python3 tools/select_roi.py data/scene01_white_d050_r01
@@ -193,16 +193,13 @@ rgbd-characterization/
 │
 ├── config/
 │   └── roi/
-│       ├── baseline/
-│       │   ├── scene01_white_d050.yaml
-│       │   ├── scene01_white_d100.yaml
-│       │   ├── scene01_white_d150.yaml
-│       │   └── ...
-│       └── alignment/
-│           └── ...
+│       ├── scene01_white_d050.yaml
+│       ├── scene01_white_d100.yaml
+│       ├── scene01_white_d150.yaml
+│       └── ...
 │
 ├── tools/
-│   ├── extract_data.py
+│   ├── extract_dataset.py
 │   ├── inspect_dataset.py
 │   ├── select_roi.py
 │   ├── analyze_baseline.py
@@ -475,7 +472,7 @@ def get_roi_path(
     roi_root: Path,
     experiment_name: str,
 ) -> Path:
-    # roi_root should be config/roi/baseline for this pipeline
+    # roi_root should be config/roi for this pipeline
     roi_key = derive_roi_key(
         experiment_name
     )
@@ -490,7 +487,7 @@ scene01_white_d050_r02
 ↓
 scene01_white_d050
 ↓
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 ### 5.4 ROI YAML Format
@@ -591,7 +588,7 @@ scene01_white_d050
 Selecting ROI...
 
 Saved:
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 Repeat:
@@ -605,7 +602,7 @@ Expected:
 
 ```text
 ROI already exists:
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 
 Skipping ROI selection.
 ```
@@ -746,7 +743,7 @@ data/
 Only one ROI file exists:
 
 ```text
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 Then:
@@ -1658,8 +1655,8 @@ results/
         ├── summary.yaml
         ├── frame_median_depth.csv
         ├── temporal_std.npy
-        ├── zero_ratio.npy
-        ├── max_uint16_ratio.npy
+        ├── zero_ratio_map.npy
+        ├── max_uint16_ratio_map.npy
         └── frame_plane_metrics.csv
 ```
 
@@ -1674,7 +1671,7 @@ dataset:
 
 roi:
   key: scene01_white_d050
-  config: config/roi/baseline/scene01_white_d050.yaml
+  config: config/roi/scene01_white_d050.yaml
   x: 280
   y: 210
   width: 80
@@ -1773,7 +1770,7 @@ python3 tools/select_roi.py \
 Expected:
 
 ```text
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 ### Step 3
@@ -1862,7 +1859,7 @@ scene01_white_d050_r03
 all use:
 
 ```text
-config/roi/baseline/scene01_white_d050.yaml
+config/roi/scene01_white_d050.yaml
 ```
 
 For each new distance:
@@ -1962,7 +1959,7 @@ Always retain ROI dimensions and pixel count because ROI size differs by distanc
    scene01_white_d050_r01
 
 5. Save:
-   config/roi/baseline/scene01_white_d050.yaml
+   config/roi/scene01_white_d050.yaml
 
 6. Run select_roi.py on d050 r02/r03
    - confirm ROI exists
