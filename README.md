@@ -127,21 +127,39 @@ plugins from affecting the local NumPy-based test suite.
 
 Completed:
 
-- depth extraction into a validated NPZ dataset
-- dataset inspection and QA images
-- reusable rectangular ROI selection
+- depth extraction and validation for 15 datasets
+- reusable rectangular ROI selection for d050, d100, d150, d200, and d300
+- ROI reuse across three repeats at each distance
 - raw-depth preprocessing for `0` and `65535`
 - ROI depth-quality metrics
 - per-pixel temporal-noise metrics
 - per-frame measured-depth metrics
 - single-dataset baseline CLI and reproducible artifacts
+- baseline analysis for all five distances and fifteen recordings
+- manual cross-distance characterization summary
+
+Current results are summarized in:
+
+```text
+results/scene01_white_depth_characterization_summary.md
+```
+
+The generated per-dataset artifacts were removed after the consolidated
+results were reviewed and recorded.
 
 Next:
 
-- validate `scene01_white_d050_r01` using the real dataset
-- verify ROI reuse across the remaining 50 cm repeats
-- analyze additional distances
-- aggregate repeats and implement cross-distance reports and plots
+- implement the depth-camera intrinsic model
+- implement ROI depth back-projection with the original image-coordinate offset
+- implement deterministic per-frame plane fitting
+- implement point-to-plane residual calculations
+- implement planarity metrics, including plane distance, tilt, residuals, and
+  inlier ratio
+- add synthetic tests for back-projection, plane fitting, and planarity
+- integrate geometric metrics into `tools/analyze_baseline.py`
+- validate the geometric results on `scene01_white_d050_r01`
+- analyze the remaining repeats and distances with the completed baseline
+  pipeline
 
 ---
 
