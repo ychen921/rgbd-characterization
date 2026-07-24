@@ -12,6 +12,12 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
 DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results"
+DEFAULT_DEPTH_CAMERA_INFO_PATH = (
+    PROJECT_ROOT
+    / "config"
+    / "calib"
+    / "depth_camera_info.yaml"
+)
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -37,6 +43,17 @@ from src.preprocessing.roi import (
     get_roi_path,
     load_roi,
 )
+from src.geometry.camera import (
+    CameraIntrinsics,
+    load_camera_intrinsics,
+    validate_depth_resolution,
+)
+from src.metrics.planarity import (
+    DEFAULT_INLIER_THRESHOLD_MM,
+    DEFAULT_MIN_VALID_POINTS,
+    PlanarityResult,
+    compute_planarity,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +76,7 @@ class BaselineMetricResults:
     depth_quality: DepthQualityResult
     temporal_noise: TemporalNoiseResult
     measured_depth: MeasuredDepthResult
+    planarity: PlanarityResult
 
 
 @dataclass(frozen=True)
@@ -68,6 +86,11 @@ class BaselineAnalysisResult:
     source: BaselineInput
     metrics: BaselineMetricResults
     min_valid_ratio: float
+
+    depth_camera_info_path: Path
+    intrinsics: CameraIntrinsics
+    plane_inlier_threshold_mm: float
+    plane_min_valid_points: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,6 +135,39 @@ def parse_args() -> argparse.Namespace:
         help="Minimum valid-frame ratio for temporal noise.",
     )
 
+    # Depth intrinsic info
+    parser.add_argument(
+        "--depth-camera-info",
+        type=Path,
+        default=DEFAULT_DEPTH_CAMERA_INFO_PATH,
+        help=(
+            "Depth CameraInfo YAML path "
+            "(default: config/calib/depth_camera_info.yaml)."
+        ),
+    )
+
+    # Plane residual counted as inliers
+    parser.add_argument(
+        "--plane-inlier-threshold-mm",
+        type=float,
+        default=DEFAULT_INLIER_THRESHOLD_MM,
+        help=(
+            "Maximum absolute plane residual counted as an inlier, "
+            "in millimetres. Defaults to 5.0."
+        ),
+    )
+
+    # Minimum depth points for plane fitting
+    parser.add_argument(
+        "--plane-min-valid-points",
+        type=int,
+        default=DEFAULT_MIN_VALID_POINTS,
+        help=(
+            "Minimum valid depth points required for each plane fit. "
+            "Defaults to 100."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -124,10 +180,30 @@ def print_completion(
     source = result.source
     roi = source.roi
     median_depth = result.metrics.measured_depth.median_depth
+    planarity = result.metrics.planarity
+
     median_text = (
         "undefined"
         if not np.isfinite(median_depth)
         else f"{median_depth:.3f} mm"
+    )
+
+    distance_text = (
+        "undefined"
+        if not np.isfinite(
+            planarity.median_distance_m
+        )
+        else (
+            f"{planarity.median_distance_m:.6f} m"
+        )
+    )
+
+    rmse_text = (
+        "undefined"
+        if not np.isfinite(
+            planarity.median_rmse_mm
+        )
+        else f"{planarity.median_rmse_mm:.3f} mm"
     )
 
     print("Baseline analysis complete.")
@@ -147,13 +223,36 @@ def print_completion(
     print("Measured depth:")
     print(f"  median: {median_text}")
     print()
+    print("Planarity:")
+    print(
+        "  successful frames: "
+        f"{planarity.successful_frames}"
+    )
+    print(
+        "  failed frames: "
+        f"{planarity.failed_frames}"
+    )
+    print(
+        "  median plane distance: "
+        f"{distance_text}"
+    )
+    print(
+        "  median residual RMSE: "
+        f"{rmse_text}"
+    )
+    print()
     print("Saved:")
     print(f"  {_summary_path(Path(output_dir).expanduser())}")
 
 
 def compute_baseline_metrics(
     raw_roi: np.ndarray,
+    *,
+    intrinsics: CameraIntrinsics,
+    roi: RectROI,
     min_valid_ratio: float = DEFAULT_MIN_VALID_RATIO,
+    plane_inlier_threshold_mm: float = DEFAULT_INLIER_THRESHOLD_MM,
+    plane_min_valid_points: int = DEFAULT_MIN_VALID_POINTS,
 ) -> BaselineMetricResults:
     """Compute all baseline metrics for a single dataset."""
 
@@ -173,10 +272,22 @@ def compute_baseline_metrics(
         depth=prepared_roi
     )
 
+    # Planarity requires the ROI's original full-image offset so that
+    # cropped pixels are back-projected with the correct camera rays.
+    planarity_result = compute_planarity(
+        prepared_roi,
+        intrinsics=intrinsics,
+        roi_x=roi.x,
+        roi_y=roi.y,
+        inlier_threshold_mm=plane_inlier_threshold_mm,
+        min_valid_points=plane_min_valid_points,
+    )
+
     return BaselineMetricResults(
         depth_quality=dq_result,
         temporal_noise=tn_result,
         measured_depth=md_result,
+        planarity=planarity_result,
     )
 
 
@@ -267,6 +378,9 @@ def build_summary(
     temporal = result.metrics.temporal_noise
     measured = result.metrics.measured_depth
 
+    planarity = result.metrics.planarity
+    intrinsics = result.intrinsics
+
     return {
         "dataset": {
             "experiment": source.experiment_name,
@@ -283,6 +397,18 @@ def build_summary(
             "width": roi.width,
             "height": roi.height,
             "pixel_count": roi.pixel_count,
+        },
+        "depth_camera": {
+            "config": _summary_path(
+                result.depth_camera_info_path
+            ),
+            "frame_id": intrinsics.frame_id,
+            "width": intrinsics.width,
+            "height": intrinsics.height,
+            "fx": intrinsics.fx,
+            "fy": intrinsics.fy,
+            "cx": intrinsics.cx,
+            "cy": intrinsics.cy,
         },
         "depth_preprocessing": {
             "excluded_raw_values": [
@@ -314,7 +440,220 @@ def build_summary(
             "p05_mm": _finite_or_none(measured.p05_depth),
             "p95_mm": _finite_or_none(measured.p95_depth),
         },
+        "planarity": {
+            "fitting_method": "svd",
+            "inlier_threshold_mm": float(
+                result.plane_inlier_threshold_mm
+            ),
+            "min_valid_points": int(
+                result.plane_min_valid_points
+            ),
+            "successful_frames": (
+                planarity.successful_frames
+            ),
+            "failed_frames": planarity.failed_frames,
+            "plane_distance": {
+                "median_m": _finite_or_none(
+                    planarity.median_distance_m
+                ),
+                "std_mm": _finite_or_none(
+                    planarity.distance_std_mm
+                ),
+            },
+            "tilt": {
+                "median_deg": _finite_or_none(
+                    planarity.median_tilt_deg
+                ),
+                "std_deg": _finite_or_none(
+                    planarity.tilt_std_deg
+                ),
+            },
+            "residual": {
+                "median_rmse_mm": _finite_or_none(
+                    planarity.median_rmse_mm
+                ),
+                "p95_rmse_mm": _finite_or_none(
+                    planarity.p95_rmse_mm
+                ),
+                "median_p95_abs_mm": _finite_or_none(
+                    planarity.median_p95_abs_mm
+                ),
+            },
+            "inlier_ratio": {
+                "median": _finite_or_none(
+                    planarity.median_inlier_ratio
+                ),
+            },
+        },
     }
+
+
+def _csv_float_or_blank(
+    value: float,
+) -> float | str:
+    """Return a finite CSV number or an empty field."""
+    if not np.isfinite(value):
+        return ""
+    return float(value)
+
+
+def _validate_frame_plane_metrics(
+    result: BaselineAnalysisResult,
+) -> None:
+    """Validate timestamp-aligned planarity arrays before writing."""
+    timestamps_ns = result.source.dataset.timestamps_ns
+    planarity = result.metrics.planarity
+    num_frames = result.source.dataset.num_frames
+
+    if timestamps_ns.shape != (num_frames,):
+        raise ValueError(
+            "timestamps_ns must have shape "
+            f"({num_frames},); got shape {timestamps_ns.shape}"
+        )
+
+    if planarity.frame_normal.shape != (
+        num_frames,
+        3,
+    ):
+        raise ValueError(
+            "frame_normal must have shape "
+            f"({num_frames}, 3); "
+            f"got shape {planarity.frame_normal.shape}"
+        )
+
+    one_dimensional_arrays = {
+        "frame_distance_m": (
+            planarity.frame_distance_m
+        ),
+        "frame_tilt_deg": (
+            planarity.frame_tilt_deg
+        ),
+        "frame_rmse_mm": (
+            planarity.frame_rmse_mm
+        ),
+        "frame_residual_std_mm": (
+            planarity.frame_residual_std_mm
+        ),
+        "frame_p95_abs_mm": (
+            planarity.frame_p95_abs_mm
+        ),
+        "frame_inlier_ratio": (
+            planarity.frame_inlier_ratio
+        ),
+        "frame_valid_points": (
+            planarity.frame_valid_points
+        ),
+        "frame_fit_succeeded": (
+            planarity.frame_fit_succeeded
+        ),
+    }
+
+    for field_name, values in one_dimensional_arrays.items():
+        if values.shape != (num_frames,):
+            raise ValueError(
+                f"{field_name} must have shape "
+                f"({num_frames},); got shape {values.shape}"
+            )
+
+
+def save_frame_plane_metrics_csv(
+    csv_path: Path,
+    result: BaselineAnalysisResult,
+) -> None:
+    """Save timestamp-aligned per-frame plane metrics."""
+    _validate_frame_plane_metrics(result)
+
+    csv_path = Path(csv_path).expanduser()
+    csv_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    timestamps_ns = result.source.dataset.timestamps_ns
+    planarity = result.metrics.planarity
+    num_frames = result.source.dataset.num_frames
+
+    with csv_path.open(
+        "x",
+        encoding="utf-8",
+        newline="",
+    ) as stream:
+        writer = csv.writer(stream)
+
+        writer.writerow(
+            [
+                "frame_index",
+                "timestamp_ns",
+                "fit_succeeded",
+                "valid_points",
+                "normal_x",
+                "normal_y",
+                "normal_z",
+                "plane_distance_m",
+                "tilt_deg",
+                "residual_rmse_mm",
+                "residual_std_mm",
+                "residual_p95_abs_mm",
+                "inlier_ratio",
+            ]
+        )
+
+        for frame_index in range(num_frames):
+            normal = planarity.frame_normal[
+                frame_index
+            ]
+
+            writer.writerow(
+                [
+                    frame_index,
+                    int(timestamps_ns[frame_index]),
+                    str(
+                        bool(
+                            planarity.frame_fit_succeeded[
+                                frame_index
+                            ]
+                        )
+                    ).lower(),
+                    int(
+                        planarity.frame_valid_points[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(normal[0]),
+                    _csv_float_or_blank(normal[1]),
+                    _csv_float_or_blank(normal[2]),
+                    _csv_float_or_blank(
+                        planarity.frame_distance_m[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(
+                        planarity.frame_tilt_deg[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(
+                        planarity.frame_rmse_mm[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(
+                        planarity.frame_residual_std_mm[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(
+                        planarity.frame_p95_abs_mm[
+                            frame_index
+                        ]
+                    ),
+                    _csv_float_or_blank(
+                        planarity.frame_inlier_ratio[
+                            frame_index
+                        ]
+                    ),
+                ]
+            )
 
 
 def save_summary(
@@ -490,6 +829,7 @@ def save_baseline_analysis(
     artifact_paths = [
         output_dir / "summary.yaml",
         output_dir / "frame_median_depth.csv",
+        output_dir / "frame_plane_metrics.csv",
         output_dir / "temporal_std.npy",
         output_dir / "zero_ratio_map.npy",
         output_dir / "max_uint16_ratio_map.npy",
@@ -515,8 +855,15 @@ def save_baseline_analysis(
     # Save all artifacts for the baseline analysis
     summary = build_summary(result=result)
 
+    _validate_frame_plane_metrics(result)
+
     save_frame_median_csv(
         csv_path=output_dir / "frame_median_depth.csv",
+        result=result,
+    )
+
+    save_frame_plane_metrics_csv(
+        csv_path=output_dir / "frame_plane_metrics.csv",
         result=result,
     )
 
@@ -537,6 +884,9 @@ def analyze_baseline(
     dataset_dir: Path,
     roi_root: Path = DEFAULT_ROI_ROOT,
     min_valid_ratio: float = DEFAULT_MIN_VALID_RATIO,
+    depth_camera_info_path: Path = DEFAULT_DEPTH_CAMERA_INFO_PATH,
+    plane_inlier_threshold_mm: float = DEFAULT_INLIER_THRESHOLD_MM,
+    plane_min_valid_points: int = DEFAULT_MIN_VALID_POINTS,
 ) -> BaselineAnalysisResult:
     """Load one baseline dataset and compute all ROI metrics."""
 
@@ -546,16 +896,35 @@ def analyze_baseline(
         roi_root=roi_root,
     )
 
+    # Load depth camera intrinsic
+    camera_info_path = Path(depth_camera_info_path).expanduser()
+    intrinsics = load_camera_intrinsics(camera_info_path)
+
+    # CameraInfo describes the full uncropped depth image, so validate
+    # it against the dataset rather than the cropped ROI.
+    validate_depth_resolution(
+        baseline_input.dataset.depth,
+        intrinsics,
+    )
+
     # Compute all baseline metrics
     metrics_results = compute_baseline_metrics(
         raw_roi=baseline_input.raw_roi,
         min_valid_ratio=min_valid_ratio,
+        roi=baseline_input.roi,
+        intrinsics=intrinsics,
+        plane_inlier_threshold_mm=plane_inlier_threshold_mm,
+        plane_min_valid_points=plane_min_valid_points,
     )
 
     return BaselineAnalysisResult(
         source=baseline_input,
         metrics=metrics_results,
         min_valid_ratio=float(min_valid_ratio),
+        depth_camera_info_path=camera_info_path,
+        intrinsics=intrinsics,
+        plane_inlier_threshold_mm=float(plane_inlier_threshold_mm),
+        plane_min_valid_points=int(plane_min_valid_points),
     )
 
 
@@ -584,6 +953,9 @@ def main() -> int:
         dataset_dir=args.dataset_dir,
         roi_root=args.roi_root,
         min_valid_ratio=args.min_valid_ratio,
+        depth_camera_info_path=args.depth_camera_info,
+        plane_inlier_threshold_mm=args.plane_inlier_threshold_mm,
+        plane_min_valid_points=args.plane_min_valid_points,
     )
 
     output_dir = resolve_output_dir(
