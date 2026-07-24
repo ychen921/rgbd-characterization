@@ -33,6 +33,33 @@ class FramePlaneResult:
     valid_points: int
 
 
+@dataclass(frozen=True)
+class PlanarityResult:
+    """Store frame-aligned and aggregate planarity metrics."""
+
+    frame_normal: np.ndarray
+    frame_distance_m: np.ndarray
+    frame_tilt_deg: np.ndarray
+    frame_rmse_mm: np.ndarray
+    frame_residual_std_mm: np.ndarray
+    frame_p95_abs_mm: np.ndarray
+    frame_inlier_ratio: np.ndarray
+    frame_valid_points: np.ndarray
+    frame_fit_succeeded: np.ndarray
+
+    median_distance_m: float
+    distance_std_mm: float
+    median_tilt_deg: float
+    tilt_std_deg: float
+    median_rmse_mm: float
+    p95_rmse_mm: float
+    median_p95_abs_mm: float
+    median_inlier_ratio: float
+
+    successful_frames: int
+    failed_frames: int
+
+
 def compute_frame_planarity(
     depth_mm: np.ndarray,
     *,
@@ -121,6 +148,265 @@ def compute_frame_planarity(
     return result
 
 
+def compute_planarity(
+    depth: np.ndarray,
+    *,
+    intrinsics: CameraIntrinsics,
+    roi_x: int,
+    roi_y: int,
+    inlier_threshold_mm: float = DEFAULT_INLIER_THRESHOLD_MM,
+    min_valid_points: int = DEFAULT_MIN_VALID_POINTS,
+) -> PlanarityResult:
+    """Compute frame-aligned and aggregate planarity metrics.
+
+    ``depth`` must contain prepared float32 depth frames with shape
+    ``(N, H, W)``. Excluded samples must be represented as NaN.
+
+    Frames with fewer than ``min_valid_points`` valid samples remain aligned
+    with the input sequence, but their geometric metrics are recorded as NaN.
+    Other geometry or configuration errors are not silently ignored.
+    """
+
+    _validate_depth_sequence(depth)
+
+    threshold = _validate_inlier_threshold(
+        inlier_threshold_mm
+    )
+    minimum_points = _validate_min_valid_points(
+        min_valid_points
+    )
+
+    _validate_roi_context(
+        depth,
+        intrinsics=intrinsics,
+        roi_x=roi_x,
+        roi_y=roi_y,
+    )
+
+    num_frames = depth.shape[0]
+
+    # Preallocate one slot per input frame so skipped fits do not change
+    # the original frame indices.
+    frame_normal = np.full(
+        (num_frames, 3),
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_distance_m = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_tilt_deg = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_rmse_mm = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_residual_std_mm = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_p95_abs_mm = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_inlier_ratio = np.full(
+        num_frames,
+        np.nan,
+        dtype=np.float64,
+    )
+    frame_valid_points = np.zeros(
+        num_frames,
+        dtype=np.int64,
+    )
+    frame_fit_succeeded = np.zeros(
+        num_frames,
+        dtype=bool,
+    )
+
+    for frame_index, frame in enumerate(depth):
+        # Match depth_roi_to_points(): only finite, positive depth values
+        # contribute camera-space points.
+        valid_points = int(
+            np.count_nonzero(
+                np.isfinite(frame) & (frame > 0.0)
+            )
+        )
+
+        frame_valid_points[frame_index] = valid_points
+
+        # Insufficient frames remain present in every result array. Their
+        # floating-point metrics retain NaN and fit_succeeded remains false.
+        if valid_points < minimum_points:
+            continue
+
+        frame_result = compute_frame_planarity(
+            frame,
+            intrinsics=intrinsics,
+            roi_x=roi_x,
+            roi_y=roi_y,
+            inlier_threshold_mm=threshold,
+            min_valid_points=minimum_points,
+        )
+
+        # Store every successful fit at its original frame index.
+        frame_normal[frame_index] = (
+            frame_result.normal
+        )
+        frame_distance_m[frame_index] = (
+            frame_result.distance_m
+        )
+        frame_tilt_deg[frame_index] = (
+            frame_result.tilt_deg
+        )
+        frame_rmse_mm[frame_index] = (
+            frame_result.rmse_mm
+        )
+        frame_residual_std_mm[frame_index] = (
+            frame_result.residual_std_mm
+        )
+        frame_p95_abs_mm[frame_index] = (
+            frame_result.residual_p95_abs_mm
+        )
+        frame_inlier_ratio[frame_index] = (
+            frame_result.inlier_ratio
+        )
+
+        frame_fit_succeeded[frame_index] = True
+
+    successful_frames = int(
+        np.count_nonzero(frame_fit_succeeded)
+    )
+
+    failed_frames = num_frames - successful_frames
+
+    if successful_frames == 0:
+        return _undefined_planarity_result(
+            frame_normal=frame_normal,
+            frame_distance_m=frame_distance_m,
+            frame_tilt_deg=frame_tilt_deg,
+            frame_rmse_mm=frame_rmse_mm,
+            frame_residual_std_mm=(
+                frame_residual_std_mm
+            ),
+            frame_p95_abs_mm=frame_p95_abs_mm,
+            frame_inlier_ratio=frame_inlier_ratio,
+            frame_valid_points=frame_valid_points,
+            frame_fit_succeeded=(
+                frame_fit_succeeded
+            ),
+            failed_frames=failed_frames,
+        )
+
+    # Aggregate only successfully fitted frames. Failed frame slots remain
+    # available in the frame-aligned arrays for later CSV output.
+    successful_distance_m = frame_distance_m[frame_fit_succeeded]
+    successful_tilt_deg = frame_tilt_deg[frame_fit_succeeded]
+    successful_rmse_mm = frame_rmse_mm[frame_fit_succeeded]
+    successful_p95_abs_mm = frame_p95_abs_mm[frame_fit_succeeded]
+    successful_inlier_ratio = frame_inlier_ratio[frame_fit_succeeded]
+
+    results = PlanarityResult(
+        frame_normal=frame_normal,
+        frame_distance_m=frame_distance_m,
+        frame_tilt_deg=frame_tilt_deg,
+        frame_rmse_mm=frame_rmse_mm,
+        frame_residual_std_mm=(
+            frame_residual_std_mm
+        ),
+        frame_p95_abs_mm=frame_p95_abs_mm,
+        frame_inlier_ratio=frame_inlier_ratio,
+        frame_valid_points=frame_valid_points,
+        frame_fit_succeeded=frame_fit_succeeded,
+        median_distance_m=float(
+            np.median(successful_distance_m)
+        ),
+        # Frame distance is stored in metres, but its temporal spread is
+        # reported in millimetres for consistency with residual metrics.
+        distance_std_mm=float(
+            np.std(
+                successful_distance_m,
+                ddof=0,
+            )
+            * 1000.0
+        ),
+        median_tilt_deg=float(
+            np.median(successful_tilt_deg)
+        ),
+        tilt_std_deg=float(
+            np.std(
+                successful_tilt_deg,
+                ddof=0,
+            )
+        ),
+        median_rmse_mm=float(
+            np.median(successful_rmse_mm)
+        ),
+        p95_rmse_mm=float(
+            np.percentile(
+                successful_rmse_mm,
+                95,
+            )
+        ),
+        median_p95_abs_mm=float(
+            np.median(successful_p95_abs_mm)
+        ),
+        median_inlier_ratio=float(
+            np.median(successful_inlier_ratio)
+        ),
+        successful_frames=successful_frames,
+        failed_frames=failed_frames,
+    )
+
+    return results
+
+
+def _undefined_planarity_result(
+    *,
+    frame_normal: np.ndarray,
+    frame_distance_m: np.ndarray,
+    frame_tilt_deg: np.ndarray,
+    frame_rmse_mm: np.ndarray,
+    frame_residual_std_mm: np.ndarray,
+    frame_p95_abs_mm: np.ndarray,
+    frame_inlier_ratio: np.ndarray,
+    frame_valid_points: np.ndarray,
+    frame_fit_succeeded: np.ndarray,
+    failed_frames: int,
+) -> PlanarityResult:
+    """Return aligned frame arrays with undefined aggregate statistics."""
+    return PlanarityResult(
+        frame_normal=frame_normal,
+        frame_distance_m=frame_distance_m,
+        frame_tilt_deg=frame_tilt_deg,
+        frame_rmse_mm=frame_rmse_mm,
+        frame_residual_std_mm=(
+            frame_residual_std_mm
+        ),
+        frame_p95_abs_mm=frame_p95_abs_mm,
+        frame_inlier_ratio=frame_inlier_ratio,
+        frame_valid_points=frame_valid_points,
+        frame_fit_succeeded=frame_fit_succeeded,
+        median_distance_m=float("nan"),
+        distance_std_mm=float("nan"),
+        median_tilt_deg=float("nan"),
+        tilt_std_deg=float("nan"),
+        median_rmse_mm=float("nan"),
+        p95_rmse_mm=float("nan"),
+        median_p95_abs_mm=float("nan"),
+        median_inlier_ratio=float("nan"),
+        successful_frames=0,
+        failed_frames=failed_frames,
+    )
+
+
 def _validate_depth_frame(
     depth_mm: np.ndarray,
 ) -> None:
@@ -153,6 +439,83 @@ def _validate_depth_frame(
     if np.any(np.isinf(depth_mm)):
         raise ValueError(
             "depth_mm must contain only finite values or NaN"
+        )
+
+
+def _validate_depth_sequence(
+    depth: np.ndarray,
+) -> None:
+    """Validate prepared ROI frames for planarity computation."""
+
+    if not isinstance(depth, np.ndarray):
+        raise TypeError(
+            "depth must be a numpy.ndarray; "
+            f"got {type(depth).__name__}"
+        )
+
+    if depth.ndim != 3:
+        raise ValueError(
+            "depth must have shape (N, H, W); "
+            f"got shape {depth.shape}"
+        )
+
+    if depth.dtype != np.float32:
+        raise ValueError(
+            "depth must have dtype float32; "
+            f"got {depth.dtype}"
+        )
+
+    if depth.shape[1] == 0 or depth.shape[2] == 0:
+        raise ValueError(
+            "depth spatial dimensions must be positive; "
+            f"got shape {depth.shape}"
+        )
+
+    if np.any(np.isinf(depth)):
+        raise ValueError(
+            "depth must contain only finite values or NaN"
+        )
+
+
+def _validate_roi_context(
+    depth: np.ndarray,
+    *,
+    intrinsics: CameraIntrinsics,
+    roi_x: int,
+    roi_y: int,
+) -> None:
+    """Validate ROI placement against the calibrated image resolution."""
+
+    if not isinstance(intrinsics, CameraIntrinsics):
+        raise TypeError(
+            "intrinsics must be CameraIntrinsics; "
+            f"got {type(intrinsics).__name__}"
+        )
+
+    for field_name, value in (
+        ("roi_x", roi_x),
+        ("roi_y", roi_y),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(
+                f"{field_name} must be an integer"
+            )
+
+        if value < 0:
+            raise ValueError(
+                f"{field_name} must be non-negative"
+            )
+
+    _, roi_height, roi_width = depth.shape
+
+    if roi_x + roi_width > intrinsics.width:
+        raise ValueError(
+            "Depth ROI exceeds calibrated image width"
+        )
+
+    if roi_y + roi_height > intrinsics.height:
+        raise ValueError(
+            "Depth ROI exceeds calibrated image height"
         )
 
 
