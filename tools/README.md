@@ -99,6 +99,13 @@ The shared ROI configuration must also exist:
 config/roi/scene01_white_d050.yaml
 ```
 
+The depth CameraInfo calibration must match the extracted depth-frame
+resolution:
+
+```text
+config/calib/depth_camera_info.yaml
+```
+
 Run from the workspace root:
 
 ```bash
@@ -113,11 +120,20 @@ depth.npz
 ↓
 load shared distance-group ROI
 ↓
+load depth CameraInfo and validate the full-frame resolution
+↓
 crop raw uint16 depth frames
 ├── zero and maximum-uint16 occurrence metrics
 └── convert 0 and 65535 to NaN
         ├── per-pixel temporal noise
-        └── per-frame measured-depth median
+        ├── per-frame measured-depth median
+        └── restore full-image ROI coordinates
+                ↓
+            back-project valid depth to camera-space points
+                ↓
+            fit one deterministic SVD plane per frame
+                ↓
+            distance, tilt, residual, and inlier metrics
 ↓
 save baseline artifacts
 ```
@@ -128,6 +144,7 @@ By default, artifacts are written to:
 results/scene01_white_d050_r01/baseline/
 ├── summary.yaml
 ├── frame_median_depth.csv
+├── frame_plane_metrics.csv
 ├── temporal_std.npy
 ├── zero_ratio_map.npy
 └── max_uint16_ratio_map.npy
@@ -139,8 +156,19 @@ results/scene01_white_d050_r01/baseline/
 frame_index,timestamp_ns,median_depth_mm
 ```
 
-An all-invalid frame keeps its row and uses an empty median-depth field. The
-three NPY files contain ROI-sized `float64` maps and preserve NaN values.
+`frame_plane_metrics.csv` also keeps one timestamp-aligned row per input
+frame:
+
+```text
+frame_index,timestamp_ns,fit_succeeded,valid_points,normal_x,normal_y,normal_z,plane_distance_m,tilt_deg,residual_rmse_mm,residual_std_mm,residual_p95_abs_mm,inlier_ratio
+```
+
+An all-invalid or insufficient-point frame keeps its rows and uses empty
+floating-point fields. Its valid-point count and fit status remain available.
+The three NPY files contain ROI-sized `float64` maps and preserve NaN values.
+`summary.yaml` records the CameraInfo source and intrinsics, plane-fitting
+parameters, successful and failed frame counts, and aggregate planarity
+statistics.
 
 Options:
 
@@ -154,6 +182,18 @@ Options:
 
 --min-valid-ratio FLOAT
     Minimum valid-frame ratio for each temporal-noise pixel. Defaults to 0.9.
+
+--depth-camera-info PATH
+    Depth CameraInfo YAML. Defaults to
+    config/calib/depth_camera_info.yaml.
+
+--plane-inlier-threshold-mm FLOAT
+    Maximum absolute plane residual counted as an inlier, in millimetres.
+    Defaults to 5.0.
+
+--plane-min-valid-points INT
+    Minimum valid depth points required for each frame's plane fit.
+    Defaults to 100.
 ```
 
 Example with explicit paths:
@@ -163,12 +203,16 @@ python3 tools/analyze_baseline.py \
     data/scene01_white_d050_r01 \
     --roi-root config/roi \
     --output-dir results/scene01_white_d050_r01/baseline \
-    --min-valid-ratio 0.9
+    --min-valid-ratio 0.9 \
+    --depth-camera-info config/calib/depth_camera_info.yaml \
+    --plane-inlier-threshold-mm 5.0 \
+    --plane-min-valid-points 100
 ```
 
 The analysis is non-overwriting. If any planned artifact already exists, the
 tool fails before writing new output files. If the ROI configuration is
-missing, run `select_roi.py` first.
+missing, run `select_roi.py` first. A missing CameraInfo file or a calibration
+resolution mismatch also stops the analysis before metric computation.
 
 Show the CLI help:
 

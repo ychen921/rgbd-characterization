@@ -47,9 +47,11 @@ full-frame depth.npz
 ↓
 shared scene/target/distance ROI
 ↓
-depth-quality, temporal-noise, and measured-depth metrics
+depth CameraInfo calibration
 ↓
-summary, frame-aligned CSV, and ROI-sized NPY maps
+depth-quality, temporal-noise, measured-depth, and planarity metrics
+↓
+summary, frame-aligned CSV files, and ROI-sized NPY maps
 ```
 
 Run each command from the workspace root.
@@ -97,6 +99,7 @@ Default output:
 results/scene01_white_d050_r01/baseline/
 ├── summary.yaml
 ├── frame_median_depth.csv
+├── frame_plane_metrics.csv
 ├── temporal_std.npy
 ├── zero_ratio_map.npy
 └── max_uint16_ratio_map.npy
@@ -134,6 +137,13 @@ Completed:
 - ROI depth-quality metrics
 - per-pixel temporal-noise metrics
 - per-frame measured-depth metrics
+- depth-camera CameraInfo loading and resolution validation
+- ROI depth back-projection with the original image-coordinate offset
+- deterministic SVD plane fitting and point-to-plane residuals
+- per-frame and aggregate planarity metrics
+- synthetic tests for back-projection, plane fitting, and planarity
+- geometric metric integration in `tools/analyze_baseline.py`
+- timestamp-aligned per-frame plane-metrics CSV output
 - single-dataset baseline CLI and reproducible artifacts
 - baseline analysis for all five distances and fifteen recordings
 - manual cross-distance characterization summary
@@ -149,17 +159,10 @@ results were reviewed and recorded.
 
 Next:
 
-- implement the depth-camera intrinsic model
-- implement ROI depth back-projection with the original image-coordinate offset
-- implement deterministic per-frame plane fitting
-- implement point-to-plane residual calculations
-- implement planarity metrics, including plane distance, tilt, residuals, and
-  inlier ratio
-- add synthetic tests for back-projection, plane fitting, and planarity
-- integrate geometric metrics into `tools/analyze_baseline.py`
 - validate the geometric results on `scene01_white_d050_r01`
 - analyze the remaining repeats and distances with the completed baseline
   pipeline
+- update the cross-distance characterization summary with geometric metrics
 
 ---
 
