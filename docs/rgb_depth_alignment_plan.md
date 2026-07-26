@@ -384,6 +384,10 @@ rgbd-characterization/
 │           ├── scene05_alignment_d050_center_yaw00.yaml
 │           └── ...
 │
+├── scripts/
+│   ├── record_experiment.sh
+│   └── record_alignment_experiment.sh
+│
 ├── tools/
 │   ├── extract_data.py
 │   ├── select_roi.py
@@ -414,6 +418,24 @@ rgbd-characterization/
 ```
 
 Do not add RGB-specific logic to `tools/analyze_baseline.py`.
+
+Recording-script responsibilities:
+
+```text
+scripts/record_experiment.sh
+→ preserve the existing depth-baseline and legacy recording workflow
+
+scripts/record_alignment_experiment.sh
+→ perform alignment Phase 0 preflight and record formal scene05 bags
+
+future scripts/record_d2c_validation.sh
+→ record registration-off/on diagnostic data under diagnostics/d2c_transform
+```
+
+Do not add custom D2C transformation recording modes to the formal alignment
+recorder. Shared shell helpers may be extracted later if recorder duplication
+becomes significant, but the first alignment implementation should not require
+refactoring the existing recorder.
 
 ---
 
@@ -1284,7 +1306,51 @@ each phase before expanding the implementation or dataset.
 
 ### Phase 0 — Data and Device Contract
 
-Confirm:
+Implement a standalone alignment recorder:
+
+```text
+scripts/record_alignment_experiment.sh
+```
+
+The recorder owns both the Phase 0 runtime preflight and formal scene05 bag
+recording. It must not change the existing behavior of
+`scripts/record_experiment.sh`.
+
+Recommended invocation:
+
+```bash
+scripts/record_alignment_experiment.sh \
+  --distance-mm 1000 \
+  --position center \
+  --yaw-deg 0 \
+  --repeat 1 \
+  --duration 5 \
+  --camera-node /camera/camera \
+  --registration-param depth_registration \
+  --registration-mode sdk
+```
+
+The actual camera node and registration parameter must be verified for the
+installed wrapper and must not be accepted as undocumented assumptions.
+
+Required experiment arguments:
+
+```text
+distance_mm
+position: center | top_left | top_right | bottom_left | bottom_right
+yaw_deg
+repeat
+```
+
+The recorder derives the formal experiment name, including:
+
+```text
+0°   → yaw00
++30° → yawp30
+-30° → yawm30
+```
+
+Before creating a formal bag, run the following preflight:
 
 ```text
 RGB and aligned-depth topics
@@ -1297,11 +1363,93 @@ camera info, camera parameters, and /tf_static retained
 experiment metadata schema
 ```
 
+Required topics:
+
+```text
+/camera/color/image_raw
+/camera/color/camera_info
+/camera/depth/image_raw
+/camera/depth/camera_info
+/tf_static
+```
+
+Optional topics:
+
+```text
+/camera/depth/image_unaligned
+/camera/depth_to_color
+/diagnostics
+/camera/device_status
+```
+
+A missing required topic is a failure. A missing optional topic is a warning
+and the unavailable topic must not be passed to `ros2 bag record`.
+
+Preflight policy:
+
+```text
+PASS → continue to recording
+WARN → record the warning and continue
+FAIL → stop before creating a formal bag
+```
+
+Run preflight in a temporary staging directory. For `PASS` or `WARN`, move the
+report and captured parameters into the new experiment directory before
+recording. For `FAIL`, do not create the formal experiment directory; preserve
+the failure report separately under:
+
+```text
+results/preflight/
+└── scene05_alignment_d100_center_yaw00_r01_preflight.yaml
+```
+
+The first recorder implementation must check:
+
+```text
+required commands and arguments
+experiment directory does not already exist
+required and optional topic availability
+camera parameter dump succeeds
+the configured registration parameter is enabled
+registration mode is not unknown
+RGB and depth streams publish messages
+RGB and aligned-depth dimensions match
+encodings and camera-info dimensions are consistent
+depth unit and invalid-value policy are documented
+timestamp source, unit, and clock domain are documented
+```
+
+The same script then records the bag using only verified topics and stops
+`ros2 bag record` gracefully with `SIGINT`.
+
+Recommended output:
+
+```text
+bags/
+└── scene05_alignment_d100_center_yaw00_r01/
+    ├── rosbag/
+    ├── experiment.yaml
+    ├── camera_params.yaml
+    ├── preflight.yaml
+    └── post_recording.yaml
+```
+
+`preflight.yaml` must contain an overall result plus individual checks,
+warnings, errors, and the evidence used to confirm registration. A formal
+experiment directory may contain only a `pass` or `warn` preflight result; a
+`fail` result is stored only under `results/preflight/`.
+`post_recording.yaml` must initially record the requested duration, recorder
+exit status, bag path, and recorded topics. Frame counts, actual duration, and
+timestamp ranges may be added after the first recorder version is validated.
+
 Exit condition:
 
 ```text
 one dataset can be loaded without inferred registration, coordinate, depth-unit,
 or timestamp semantics
+the standalone recorder produces preflight.yaml, experiment.yaml,
+camera_params.yaml, post_recording.yaml, and a gracefully closed rosbag
+the existing scripts/record_experiment.sh workflow remains unchanged
 ```
 
 ### Phase 1 — Phase A Recording and Extraction
@@ -1313,6 +1461,9 @@ scene05_alignment_d100_center_yaw00_r01
 scene05_alignment_d100_center_yaw00_r02
 scene05_alignment_d100_center_yaw00_r03
 ```
+
+Use `scripts/record_alignment_experiment.sh` for all three repeats. Do not use
+the legacy recorder for formal scene05 data.
 
 Exit condition:
 
@@ -1536,9 +1687,21 @@ separately
 ## 25. Immediate Next Tasks
 
 ```text
-1. Confirm the aligned depth topic and image dimensions
+1. Implement scripts/record_alignment_experiment.sh with:
+   - alignment argument validation and scene05 naming
+   - required and optional topic discovery
+   - registration runtime validation
+   - stream and camera-info dimension checks
+   - camera parameter capture
+   - preflight.yaml and experiment.yaml output
+   - graceful rosbag recording
+   - post_recording.yaml output
 
-2. Extend extraction to save:
+2. Validate the standalone recorder using one d100-center test recording
+
+3. Confirm the aligned depth topic and image dimensions
+
+4. Extend extraction to save:
    - RGB frames
    - aligned depth frames
    - RGB timestamps
@@ -1546,41 +1709,41 @@ separately
    - camera info
    - experiment metadata
 
-3. Implement src/preprocessing/frame_pairing.py
+5. Implement src/preprocessing/frame_pairing.py
 
-4. Test timestamp pairing with synthetic data
+6. Test timestamp pairing with synthetic data
 
-5. Create config/roi/alignment/
+7. Create config/roi/alignment/
 
-6. Extend select_roi.py to support:
+8. Extend select_roi.py to support:
    --roi-type alignment
 
-7. Select ROI for:
+9. Select ROI for:
    scene05_alignment_d100_center_yaw00_r01
 
-8. Implement src/segmentation/rgb_foreground.py
+10. Implement src/segmentation/rgb_foreground.py
 
-9. Implement src/segmentation/depth_foreground.py
+11. Implement src/segmentation/depth_foreground.py
 
-10. Implement initial bounding-edge offsets
+12. Implement initial bounding-edge offsets
 
-11. Implement edge-overlay visualization
+13. Implement edge-overlay visualization
 
-12. Validate one paired frame manually
+14. Validate one paired frame manually
 
-13. Implement boundary-distance metrics
+15. Implement boundary-distance metrics
 
-14. Implement mask IoU
+16. Implement mask IoU
 
-15. Implement tools/analyze_alignment.py
+17. Implement tools/analyze_alignment.py
 
-16. Validate all d100 center repeats
+18. Validate all d100 center repeats
 
-17. Add d050 and d200 center tests
+19. Add d050 and d200 center tests
 
-18. Add four image-corner positions
+20. Add four image-corner positions
 
-19. Implement tools/summarize_alignment.py
+21. Implement tools/summarize_alignment.py
 ```
 
 ---
