@@ -36,7 +36,27 @@ Related document:
 
 ```text
 docs/baseline_analysis_plan.md
+docs/rgb_depth_alignment_dataset_plan.md
+docs/d2c_transformation_validation_plan.md
 ```
+
+Document responsibilities:
+
+```text
+rgb_depth_alignment_dataset_plan.md
+→ formal scene05 dataset collection using sensor or SDK aligned depth
+
+rgb_depth_alignment_plan.md
+→ analysis of the formal aligned-depth dataset
+
+d2c_transformation_validation_plan.md
+→ diagnostic validation of a custom raw-depth-to-color transformation
+```
+
+The formal alignment analyzer consumes depth that is already mapped to the
+documented color-image coordinate system. It does not implement raw-depth
+back-projection, extrinsic transformation, color-camera projection, or
+z-buffer rasterization.
 
 ---
 
@@ -69,6 +89,13 @@ multi-camera alignment
 
 Dynamic synchronization may be added after the static pipeline is validated.
 
+Custom depth-to-color transformation validation is handled separately under:
+
+```text
+data/diagnostics/d2c_transform/
+docs/d2c_transformation_validation_plan.md
+```
+
 ---
 
 ## 3. Experimental Principle
@@ -81,7 +108,7 @@ Recommended setup:
 RGB-D camera
 ↓
 dark rectangular foreground target
-↓ 20–40 cm depth separation
+↓ 200–400 mm depth separation
 light background board
 ```
 
@@ -106,10 +133,8 @@ A uniform white board used for depth baseline characterization is insufficient b
 Initial validation:
 
 ```yaml
-distances_m:
-  - 0.5
-  - 1.0
-  - 2.0
+distances_mm:
+  - 1000
 
 positions:
   - center
@@ -124,10 +149,10 @@ duration_sec: 5
 Extended static validation:
 
 ```yaml
-distances_m:
-  - 0.5
-  - 1.0
-  - 2.0
+distances_mm:
+  - 500
+  - 1000
+  - 2000
 
 positions:
   - center
@@ -148,11 +173,16 @@ Optional angle extension:
 ```yaml
 yaw_deg:
   - -30
-  - 0
   - 30
 ```
 
 Do not begin with the full distance × position × angle matrix. Validate the center-position pipeline first.
+
+The formal collection phases and bag counts are defined in:
+
+```text
+docs/rgb_depth_alignment_dataset_plan.md
+```
 
 ---
 
@@ -161,11 +191,22 @@ Do not begin with the full distance × position × angle matrix. Validate the ce
 Recommended convention:
 
 ```text
-scene04_alignment_d050_center_yaw00_r01
-scene04_alignment_d100_center_yaw00_r01
-scene04_alignment_d100_top_left_yaw00_r01
-scene04_alignment_d100_center_yaw30_r01
+scene05_alignment_d050_center_yaw00_r01
+scene05_alignment_d100_center_yaw00_r01
+scene05_alignment_d100_top_left_yaw00_r01
+scene05_alignment_d100_center_yawp30_r01
+scene05_alignment_d100_center_yawm30_r01
 ```
+
+Yaw tokens:
+
+```text
+yaw00  →   0°
+yawp30 → +30°
+yawm30 → -30°
+```
+
+Do not use `+` or `-` in directory names.
 
 Recommended parsing fields:
 
@@ -182,12 +223,20 @@ Example experiment metadata:
 
 ```yaml
 experiment:
-  name: scene04_alignment_d100_center_yaw00_r01
+  name: scene05_alignment_d100_center_yaw00_r01
   type: rgb_depth_alignment
-  distance_mm: 1000
-  position: center
-  yaw_deg: 0
+  scene: 5
   repeat: 1
+
+geometry:
+  camera_to_foreground_mm: 1000
+  image_position: center
+  yaw_deg: 0
+
+registration:
+  enabled: true
+  aligned_depth_topic: /camera/depth/image_raw
+  mode: sdk
 ```
 
 ---
@@ -203,6 +252,8 @@ unaligned depth image, optional but recommended
 color camera_info
 depth camera_info
 timestamps
+/tf_static
+camera node parameter dump
 ```
 
 Example topics:
@@ -218,18 +269,33 @@ Example topics:
 The semantic meaning of `/camera/depth/image_raw` must be verified from launch configuration and image dimensions.
 
 Do not infer alignment state only from the topic name.
+Do not infer alignment state only from resolution or `frame_id`.
 
-Store alignment configuration in experiment metadata:
+Store registration configuration in experiment metadata:
 
 ```yaml
-alignment:
-  registration_enabled: true
+registration:
+  enabled: true
   aligned_depth_topic: /camera/depth/image_raw
   unaligned_depth_topic: /camera/depth/image_unaligned
-  registration_mode: unknown
+  mode: sdk
+  aligned_to: color
+  coordinate_convention: color_pixel_grid
 ```
 
-Replace `unknown` after confirming whether registration is performed by the device, SDK, or ROS node.
+During collection, `registration.mode` may temporarily be `unknown`. Formal
+analysis must require it to be resolved to `device`, `sdk`, or `ros_node`,
+unless an explicit diagnostic override is used and recorded in the summary.
+
+Before analysis, confirm:
+
+```text
+registration is enabled
+aligned-depth topic semantics are documented
+aligned-depth coordinate convention is documented
+image dimensions match the declared coordinate mapping
+color and depth timestamps share a documented clock domain
+```
 
 ---
 
@@ -239,12 +305,13 @@ Recommended directory:
 
 ```text
 data/
-└── scene04_alignment_d100_center_yaw00_r01/
+└── scene05_alignment_d100_center_yaw00_r01/
     ├── rgb.npz
     ├── aligned_depth.npz
     ├── timestamps.npz
     ├── color_camera_info.yaml
     ├── depth_camera_info.yaml
+    ├── camera_params.yaml
     └── experiment.yaml
 ```
 
@@ -276,6 +343,34 @@ pair_delta_ms
 
 Full-resolution source arrays should remain unchanged.
 
+Recommended dataset contract:
+
+```yaml
+schema_version: 1
+
+color:
+  array_key: rgb
+  timestamp_key: rgb_timestamp_ns
+  encoding: rgb8
+  channel_order: RGB
+
+depth:
+  array_key: aligned_depth
+  timestamp_key: depth_timestamp_ns
+  encoding: 16UC1
+  unit: mm
+  invalid_values: [0, 65535]
+
+timestamps:
+  unit: ns
+  source: message_header
+  clock_domain: ros_time
+```
+
+Replace timestamp fields with the actual capture semantics when they differ.
+Do not silently assume that bag receive time and message-header time are
+equivalent.
+
 ---
 
 ## 8. Project Structure
@@ -286,7 +381,7 @@ rgbd-characterization/
 │   └── roi/
 │       ├── baseline/
 │       └── alignment/
-│           ├── scene04_alignment_d050_center_yaw00.yaml
+│           ├── scene05_alignment_d050_center_yaw00.yaml
 │           └── ...
 │
 ├── tools/
@@ -337,7 +432,7 @@ for each RGB frame
 ↓
 find nearest depth timestamp
 ↓
-accept pair if |Δt| <= max_pair_delta_ms
+accept pair if |Δt| <= max_abs_delta_ms
 ```
 
 Recommended configuration:
@@ -345,8 +440,24 @@ Recommended configuration:
 ```yaml
 frame_pairing:
   method: nearest_timestamp
-  max_pair_delta_ms: 20.0
+  delta_definition: depth_minus_rgb
+  max_abs_delta_ms: 20.0
+  threshold_inclusive: true
+  cardinality: one_to_one
+  preserve_order: true
+  tie_breaker: earlier_depth
 ```
+
+Define:
+
+```text
+delta_ms = (depth_timestamp_ns - rgb_timestamp_ns) / 1e6
+```
+
+The acceptance threshold is applied to `abs(delta_ms)`. Store the signed
+delta in per-pair output so that a systematic stream delay remains visible.
+The initial implementation must not reuse a depth frame for multiple RGB
+frames.
 
 Record for every accepted pair:
 
@@ -421,22 +532,29 @@ experiment name without repeat suffix
 Example:
 
 ```text
-scene04_alignment_d100_center_yaw00_r01
+scene05_alignment_d100_center_yaw00_r01
 ↓
-scene04_alignment_d100_center_yaw00
+scene05_alignment_d100_center_yaw00
 ↓
-config/roi/alignment/scene04_alignment_d100_center_yaw00.yaml
+config/roi/alignment/scene05_alignment_d100_center_yaw00.yaml
 ```
 
 Recommended YAML:
 
 ```yaml
-name: scene04_alignment_d100_center_yaw00
+schema_version: 1
+name: scene05_alignment_d100_center_yaw00
 
 source:
-  experiment: scene04_alignment_d100_center_yaw00_r01
+  experiment: scene05_alignment_d100_center_yaw00_r01
   rgb_frame_index: 120
   depth_frame_index: 119
+
+coordinate_system:
+  pixel_grid: color
+  origin: top_left
+  indexing: zero_based
+  interval: half_open
 
 roi:
   type: rectangle
@@ -447,6 +565,19 @@ roi:
 ```
 
 The selected ROI must use the common aligned image coordinate system.
+Rectangle bounds use `[x, x + width)` and `[y, y + height)`.
+
+Preferred input:
+
+```text
+aligned depth width  == RGB width
+aligned depth height == RGB height
+```
+
+If the dimensions differ, analysis is allowed only when the dataset documents
+a validated conversion into one canonical pixel grid. The ROI and all metrics
+must use that grid. The initial analyzer may reject such datasets clearly
+rather than attempt an inferred scale conversion.
 
 ---
 
@@ -740,6 +871,30 @@ class FrameAlignmentResult:
 
 Frames failing segmentation or validity checks must be marked invalid rather than assigned fabricated metrics.
 
+Every accepted pair must produce one CSV row, including failed analyses.
+Recommended status fields:
+
+```text
+pairing_status
+analysis_status
+failure_reason
+```
+
+Recommended `analysis_status` values:
+
+```text
+valid
+rgb_segmentation_failed
+depth_segmentation_failed
+target_clipped
+insufficient_valid_depth
+no_valid_edges
+incompatible_dimensions
+```
+
+Invalid metrics must be empty or `NaN`, not zero. Zero is a valid measurement
+that means no observed offset.
+
 ---
 
 ## 16. Experiment Summary
@@ -748,7 +903,7 @@ Recommended summary:
 
 ```yaml
 dataset:
-  experiment: scene04_alignment_d100_center_yaw00_r01
+  experiment: scene05_alignment_d100_center_yaw00_r01
   experiment_type: rgb_depth_alignment
 
 frame_pairing:
@@ -759,8 +914,8 @@ frame_pairing:
   max_abs_delta_ms: 4.1
 
 roi:
-  key: scene04_alignment_d100_center_yaw00
-  config: config/roi/alignment/scene04_alignment_d100_center_yaw00.yaml
+  key: scene05_alignment_d100_center_yaw00
+  config: config/roi/alignment/scene05_alignment_d100_center_yaw00.yaml
   x: 180
   y: 100
   width: 280
@@ -842,7 +997,7 @@ Recommended result structure:
 
 ```text
 results/
-└── scene04_alignment_d100_center_yaw00_r01/
+└── scene05_alignment_d100_center_yaw00_r01/
     └── alignment/
         ├── summary.yaml
         ├── frame_alignment_metrics.csv
@@ -897,6 +1052,8 @@ aligned depth is missing
 RGB is missing
 timestamps are missing
 ROI is missing
+registration is disabled or unresolved
+aligned-depth coordinate convention is undocumented
 image coordinate systems are incompatible
 ```
 
@@ -976,7 +1133,7 @@ out-of-threshold pairs rejected
 Use:
 
 ```text
-scene04_alignment_d100_center_yaw00_r01
+scene05_alignment_d100_center_yaw00_r01
 ```
 
 first.
@@ -1143,7 +1300,7 @@ per-side offset stability
    --roi-type alignment
 
 7. Select ROI for:
-   scene04_alignment_d100_center_yaw00_r01
+   scene05_alignment_d100_center_yaw00_r01
 
 8. Implement src/segmentation/rgb_foreground.py
 
@@ -1176,7 +1333,7 @@ per-side offset stability
 
 The first alignment milestone is:
 
-> Successfully pair RGB and aligned-depth frames for `scene04_alignment_d100_center_yaw00_r01`, extract one valid foreground mask from each modality, and produce an edge overlay with left/right/top/bottom pixel offsets.
+> Successfully pair RGB and aligned-depth frames for `scene05_alignment_d100_center_yaw00_r01`, extract one valid foreground mask from each modality, and produce an edge overlay with left/right/top/bottom pixel offsets.
 
 Required pipeline:
 
