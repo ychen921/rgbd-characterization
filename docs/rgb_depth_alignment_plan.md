@@ -1277,7 +1277,263 @@ per-side offset stability
 
 ---
 
-## 24. Immediate Next Tasks
+## 24. Development Phases
+
+Use a gated development workflow. Complete and review the exit conditions of
+each phase before expanding the implementation or dataset.
+
+### Phase 0 — Data and Device Contract
+
+Confirm:
+
+```text
+RGB and aligned-depth topics
+registration enabled and mode resolved
+aligned depth mapped to the documented color pixel grid
+image dimensions and encodings
+depth unit and invalid values
+timestamp source and clock domain
+camera info, camera parameters, and /tf_static retained
+experiment metadata schema
+```
+
+Exit condition:
+
+```text
+one dataset can be loaded without inferred registration, coordinate, depth-unit,
+or timestamp semantics
+```
+
+### Phase 1 — Phase A Recording and Extraction
+
+Record and extract:
+
+```text
+scene05_alignment_d100_center_yaw00_r01
+scene05_alignment_d100_center_yaw00_r02
+scene05_alignment_d100_center_yaw00_r03
+```
+
+Exit condition:
+
+```text
+all required files and metadata are present
+RGB and aligned depth decode correctly
+frame counts and resolutions are plausible
+the complete target boundary is visible
+```
+
+### Phase 2 — Frame Pairing
+
+Implement one-to-one, order-preserving nearest-timestamp pairing and synthetic
+tests.
+
+Exit condition:
+
+```text
+known timestamp sequences produce the expected pairs and signed delta_ms
+threshold failures are rejected
+depth frames are not reused
+pairing summary can be reproduced from frame_pairing.csv
+```
+
+### Phase 3 — Alignment ROI
+
+Add alignment ROI selection and select the shared d100-center ROI in the color
+pixel grid.
+
+Exit condition:
+
+```text
+the ROI contains target interior, all four edges, and surrounding background
+the same ROI is valid for all three repeats
+paired RGB and depth crops pass manual review
+```
+
+### Phase 4 — Single-Frame RGB Segmentation
+
+Implement dark-foreground extraction, cleanup, dominant-contour selection, and
+target validation.
+
+Exit condition:
+
+```text
+one selected RGB frame produces a complete target mask and four plausible edges
+failure cases return an explicit status and reason
+```
+
+### Phase 5 — Single-Frame Depth Segmentation
+
+Implement invalid-depth filtering, foreground/background separation, connected
+component selection, and depth-edge validity.
+
+Exit condition:
+
+```text
+the paired depth frame produces a complete foreground mask
+invalid depth is not classified as foreground
+failure cases return an explicit status and reason
+```
+
+### Phase 6 — Initial Alignment Metrics
+
+Implement:
+
+```text
+left/right/top/bottom bounding-edge offsets
+per-side validity
+depth valid ratio
+edge overlay
+```
+
+Validate identical masks, known translation, scale difference, and an invalid
+depth edge.
+
+Exit condition:
+
+```text
+synthetic results match their expected signs and values
+one real paired frame passes manual edge-overlay review
+```
+
+This is the first alignment milestone.
+
+### Phase 7 — Single-Repeat Analyzer
+
+Integrate loading, validation, pairing, ROI, segmentation, metrics,
+visualization, and summary generation in `tools/analyze_alignment.py`.
+
+Exit condition:
+
+```text
+every accepted pair produces a CSV row
+invalid frames retain status and failure reason
+summary values can be recomputed from the CSV files
+repeated analysis is deterministic
+```
+
+### Phase 8 — Phase A Repeatability
+
+Analyze all three d100-center repeats.
+
+Exit condition:
+
+```text
+all repeats complete analysis
+valid-frame ratio and per-side stability are reported
+segmentation parameters do not depend on manual per-frame tuning
+repeat differences are quantified or explained
+```
+
+Completion of this phase completes formal dataset Phase A.
+
+### Phase 9 — Boundary Metrics
+
+Add:
+
+```text
+boundary-distance median, mean, and p95
+optional symmetric RGB-to-depth and depth-to-RGB boundary distance
+mask IoU
+per-side boundary statistics
+```
+
+Exit condition:
+
+```text
+identical and translated synthetic masks produce expected results
+metrics are added to per-frame and experiment summaries
+```
+
+### Phase 10 — Center Distance Comparison
+
+Analyze:
+
+```text
+d050 center × 3 repeats
+d100 center × 3 repeats
+d200 center × 3 repeats
+```
+
+Exit condition:
+
+```text
+all distances use the same analysis pipeline
+distance behavior and near-range occlusion effects are reported
+```
+
+### Phase 11 — Center and Corner Comparison
+
+Add all four image-corner positions and complete the Phase B matrix.
+
+Exit condition:
+
+```text
+all 45 Phase B bags have metadata and ROI coverage
+all conditions pass basic validation or have an explicit rejection reason
+center-versus-corner behavior can be aggregated
+```
+
+### Phase 12 — Cross-Experiment Summary
+
+Implement `tools/summarize_alignment.py` to aggregate distance, position, yaw,
+repeat, validity, pairing quality, per-side offsets, boundary error, and IoU.
+
+Exit condition:
+
+```text
+aggregate values remain traceable to source experiments
+missing and failed conditions are visible
+tables, plots, CSV, and YAML summaries agree
+```
+
+### Phase 13 — Angle Extension
+
+After Phase B is stable, add the `yawm30` and `yawp30` Phase C conditions.
+Re-evaluate whether bounding-box edges remain meaningful for perspective-shaped
+targets.
+
+Exit condition:
+
+```text
+angled-target segmentation is stable
+metric interpretation is documented
+positive and negative yaw behavior can be compared
+```
+
+### Phase 14 — Acceptance Criteria
+
+Define application-specific pass, warning, and invalid-test criteria using the
+collected distributions.
+
+Prefer:
+
+```text
+median boundary error
+p95 boundary error
+valid-frame ratio
+per-side median offset
+repeat-to-repeat stability
+```
+
+Do not use maximum error as the primary criterion.
+
+### Phase 15 — Dynamic Synchronization Extension
+
+Create a separate dynamic-test plan and dataset after static acceptance criteria
+are established. Keep `scene06_alignment_dynamic_...` results separate from
+static statistics.
+
+Exit condition:
+
+```text
+spatial registration error and temporal synchronization error can be interpreted
+separately
+```
+
+---
+
+## 25. Immediate Next Tasks
 
 ```text
 1. Confirm the aligned depth topic and image dimensions
@@ -1329,7 +1585,7 @@ per-side offset stability
 
 ---
 
-## 25. Current Milestone
+## 26. Current Milestone
 
 The first alignment milestone is:
 
