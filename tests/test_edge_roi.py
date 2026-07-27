@@ -9,6 +9,8 @@ import yaml
 
 from src.preprocessing.edge_roi import (
     EDGE_SCENE_TYPE,
+    EdgeBleedingConfig,
+    EdgeInvalidConfig,
     EdgeReferenceConfig,
     EdgeROIConfig,
     EdgeTransitionConfig,
@@ -107,6 +109,18 @@ def test_save_load_edge_roi_config_round_trip(
         "p2": [4.0, 7.0],
         "foreground_side": "left",
     }
+    assert document["analysis"]["reference"] == {
+        "minimum_tolerance_mm": 10.0,
+        "mad_scale": 3.0,
+        "minimum_valid_ratio": 0.9,
+        "minimum_valid_count": 100,
+    }
+    assert document["analysis"]["bleeding"] == {
+        "probability_threshold": 0.05,
+    }
+    assert document["analysis"]["invalid"] == {
+        "ratio_threshold": 0.5,
+    }
 
 
 def test_save_edge_roi_config_rejects_existing_file(
@@ -130,6 +144,35 @@ def test_load_edge_roi_config_allows_trailing_empty_document(
         stream.write("---\n")
 
     assert load_edge_roi_config(path) == _valid_config()
+
+
+def test_load_edge_roi_config_applies_new_threshold_defaults(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scene04.yaml"
+    save_edge_roi_config(path, _valid_config())
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    reference = document["analysis"]["reference"]
+    reference.pop("minimum_valid_ratio")
+    reference.pop("minimum_valid_count")
+    document["analysis"].pop("bleeding")
+    document["analysis"].pop("invalid")
+    path.unlink()
+    path.write_text(
+        yaml.safe_dump(document, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    loaded = load_edge_roi_config(path)
+
+    assert loaded.reference.minimum_valid_ratio == 0.9
+    assert loaded.reference.minimum_valid_count == 100
+    assert loaded.bleeding == EdgeBleedingConfig(
+        probability_threshold=0.05
+    )
+    assert loaded.invalid == EdgeInvalidConfig(
+        ratio_threshold=0.5
+    )
 
 
 def test_load_edge_roi_config_rejects_wrong_scene_type(
@@ -283,6 +326,34 @@ def test_edge_roi_config_rejects_left_right_for_horizontal_line() -> None:
             "mad_scale",
         ),
         (
+            lambda: EdgeReferenceConfig(
+                minimum_tolerance_mm=10.0,
+                mad_scale=3.0,
+                minimum_valid_ratio=1.1,
+            ),
+            "minimum_valid_ratio",
+        ),
+        (
+            lambda: EdgeReferenceConfig(
+                minimum_tolerance_mm=10.0,
+                mad_scale=3.0,
+                minimum_valid_count=0,
+            ),
+            "minimum_valid_count",
+        ),
+        (
+            lambda: EdgeBleedingConfig(
+                probability_threshold=-0.1,
+            ),
+            "probability_threshold",
+        ),
+        (
+            lambda: EdgeInvalidConfig(
+                ratio_threshold=1.1,
+            ),
+            "ratio_threshold",
+        ),
+        (
             lambda: EdgeTransitionConfig(
                 high_probability=1.0,
                 low_probability=0.1,
@@ -321,6 +392,15 @@ def test_edge_roi_config_rejects_invalid_distance_parameters(
 ) -> None:
     with pytest.raises(ValueError, match=field_name):
         replace(_valid_config(), **{field_name: value})
+
+
+def test_edge_roi_config_requires_symmetric_whole_distance_bins() -> None:
+    with pytest.raises(ValueError, match="integer multiple"):
+        replace(
+            _valid_config(),
+            distance_bin_px=4.0,
+            max_edge_distance_px=30.0,
+        )
 
 
 @pytest.mark.parametrize(

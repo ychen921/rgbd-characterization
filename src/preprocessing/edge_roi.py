@@ -1,6 +1,6 @@
 """Scene 04 edge ROI configuration models and YAML persistence."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from numbers import Integral, Real
 from pathlib import Path
@@ -43,6 +43,8 @@ class EdgeReferenceConfig:
 
     minimum_tolerance_mm: float
     mad_scale: float
+    minimum_valid_ratio: float = 0.9
+    minimum_valid_count: int = 100
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -57,6 +59,61 @@ class EdgeReferenceConfig:
             self,
             "mad_scale",
             _normalize_positive_real(self.mad_scale, "mad_scale"),
+        )
+        object.__setattr__(
+            self,
+            "minimum_valid_ratio",
+            _normalize_unit_interval(
+                self.minimum_valid_ratio,
+                "minimum_valid_ratio",
+            ),
+        )
+        if (
+            not isinstance(self.minimum_valid_count, Integral)
+            or isinstance(self.minimum_valid_count, (bool, np.bool_))
+            or int(self.minimum_valid_count) <= 0
+        ):
+            raise ValueError(
+                "minimum_valid_count must be a positive integer"
+            )
+        object.__setattr__(
+            self,
+            "minimum_valid_count",
+            int(self.minimum_valid_count),
+        )
+
+
+@dataclass(frozen=True)
+class EdgeBleedingConfig:
+    """Configure the profile probability used for bleeding extent."""
+
+    probability_threshold: float = 0.05
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "probability_threshold",
+            _normalize_unit_interval(
+                self.probability_threshold,
+                "bleeding probability_threshold",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class EdgeInvalidConfig:
+    """Configure the invalid-ratio threshold for invalid-band width."""
+
+    ratio_threshold: float = 0.5
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "ratio_threshold",
+            _normalize_unit_interval(
+                self.ratio_threshold,
+                "invalid ratio_threshold",
+            ),
         )
 
 
@@ -106,6 +163,12 @@ class EdgeROIConfig:
 
     reference: EdgeReferenceConfig
     transition: EdgeTransitionConfig
+    bleeding: EdgeBleedingConfig = field(
+        default_factory=EdgeBleedingConfig
+    )
+    invalid: EdgeInvalidConfig = field(
+        default_factory=EdgeInvalidConfig
+    )
 
     def __post_init__(self) -> None:
         _validate_non_empty_string(self.name, "name")
@@ -182,6 +245,23 @@ class EdgeROIConfig:
             ),
         )
 
+        # A whole number of bins on each side keeps the profile symmetric and
+        # guarantees that one bin is centered exactly on the nominal edge.
+        bin_count_per_side = (
+            self.max_edge_distance_px
+            / self.distance_bin_px
+        )
+        if not math.isclose(
+            bin_count_per_side,
+            round(bin_count_per_side),
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "max_edge_distance_px must be an integer multiple "
+                "of distance_bin_px"
+            )
+
         if not isinstance(self.reference, EdgeReferenceConfig):
             raise TypeError(
                 "reference must be an EdgeReferenceConfig; "
@@ -191,6 +271,16 @@ class EdgeROIConfig:
             raise TypeError(
                 "transition must be an EdgeTransitionConfig; "
                 f"got {type(self.transition).__name__}"
+            )
+        if not isinstance(self.bleeding, EdgeBleedingConfig):
+            raise TypeError(
+                "bleeding must be an EdgeBleedingConfig; "
+                f"got {type(self.bleeding).__name__}"
+            )
+        if not isinstance(self.invalid, EdgeInvalidConfig):
+            raise TypeError(
+                "invalid must be an EdgeInvalidConfig; "
+                f"got {type(self.invalid).__name__}"
             )
 
 
@@ -244,6 +334,24 @@ def load_edge_roi_config(path: Path) -> EdgeROIConfig:
         analysis.get("transition"),
         "analysis.transition",
     )
+    bleeding_value = analysis.get("bleeding")
+    bleeding = (
+        {}
+        if bleeding_value is None
+        else _require_mapping(
+            bleeding_value,
+            "analysis.bleeding",
+        )
+    )
+    invalid_value = analysis.get("invalid")
+    invalid = (
+        {}
+        if invalid_value is None
+        else _require_mapping(
+            invalid_value,
+            "analysis.invalid",
+        )
+    )
 
     return EdgeROIConfig(
         name=_require_non_empty_string(root, "name"),
@@ -290,6 +398,16 @@ def load_edge_roi_config(path: Path) -> EdgeROIConfig:
                 "minimum_tolerance_mm",
             ),
             mad_scale=_require_real(reference, "mad_scale"),
+            minimum_valid_ratio=_optional_real(
+                reference,
+                "minimum_valid_ratio",
+                0.9,
+            ),
+            minimum_valid_count=_optional_integer(
+                reference,
+                "minimum_valid_count",
+                100,
+            ),
         ),
         transition=EdgeTransitionConfig(
             high_probability=_require_real(
@@ -299,6 +417,20 @@ def load_edge_roi_config(path: Path) -> EdgeROIConfig:
             low_probability=_require_real(
                 transition,
                 "low_probability",
+            ),
+        ),
+        bleeding=EdgeBleedingConfig(
+            probability_threshold=_optional_real(
+                bleeding,
+                "probability_threshold",
+                0.05,
+            ),
+        ),
+        invalid=EdgeInvalidConfig(
+            ratio_threshold=_optional_real(
+                invalid,
+                "ratio_threshold",
+                0.5,
             ),
         ),
     )
@@ -348,6 +480,22 @@ def save_edge_roi_config(
                     config.reference.minimum_tolerance_mm
                 ),
                 "mad_scale": config.reference.mad_scale,
+                "minimum_valid_ratio": (
+                    config.reference.minimum_valid_ratio
+                ),
+                "minimum_valid_count": (
+                    config.reference.minimum_valid_count
+                ),
+            },
+            "bleeding": {
+                "probability_threshold": (
+                    config.bleeding.probability_threshold
+                ),
+            },
+            "invalid": {
+                "ratio_threshold": (
+                    config.invalid.ratio_threshold
+                ),
             },
             "transition": {
                 "high_probability": (
@@ -510,6 +658,16 @@ def _normalize_probability(value: object, field_name: str) -> float:
     return normalized
 
 
+def _normalize_unit_interval(value: object, field_name: str) -> float:
+    """Return a finite ratio or probability between zero and one."""
+    normalized = _normalize_finite_real(value, field_name)
+    if not 0.0 <= normalized <= 1.0:
+        raise ValueError(
+            f"{field_name} must be between 0 and 1"
+        )
+    return normalized
+
+
 def _validate_non_empty_string(value: object, field_name: str) -> None:
     """Validate a required non-empty string."""
     if not isinstance(value, str) or not value:
@@ -586,6 +744,28 @@ def _require_real(
 ) -> float:
     """Return a required finite numeric field."""
     return _normalize_finite_real(mapping.get(field_name), field_name)
+
+
+def _optional_real(
+    mapping: Mapping[str, Any],
+    field_name: str,
+    default: float,
+) -> float:
+    """Return an optional finite numeric field or its default."""
+    if field_name not in mapping:
+        return default
+    return _normalize_finite_real(mapping[field_name], field_name)
+
+
+def _optional_integer(
+    mapping: Mapping[str, Any],
+    field_name: str,
+    default: int,
+) -> int:
+    """Return an optional integer field or its default."""
+    if field_name not in mapping:
+        return default
+    return _require_integer(mapping, field_name)
 
 
 def _require_point(
