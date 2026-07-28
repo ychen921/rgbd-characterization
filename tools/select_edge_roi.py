@@ -1,18 +1,19 @@
-"""Pure configuration logic for interactive Scene 04 edge ROI selection.
+"""Interactive selection primitives for Scene 04 edge ROI configuration.
 
-The OpenCV interaction and persistence workflow are intentionally added in
-later implementation slices.  This module currently defines the reproducible
-CLI options, output paths, foreground-side inference, and configuration
-validation used by that workflow.
+Persistence and final confirmation are intentionally added in a later
+implementation slice.  This module defines reproducible CLI options, pure
+configuration logic, and the OpenCV interactions that collect three
+rectangles plus a two-point nominal edge.
 """
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import sys
 from typing import Sequence
 
+import cv2
 import numpy as np
 
 
@@ -35,6 +36,19 @@ from src.preprocessing.roi import RectROI, derive_roi_key, get_roi_path
 
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
 DEFAULT_PREVIEW_ROOT = PROJECT_ROOT / "results" / "roi_preview"
+DISPLAY_PERCENTILE_LOW = 1.0
+DISPLAY_PERCENTILE_HIGH = 99.0
+
+FOREGROUND_COLOR = (0, 255, 0)
+BACKGROUND_COLOR = (255, 0, 0)
+EDGE_COLOR = (0, 255, 255)
+LINE_COLOR = (0, 0, 255)
+INVALID_COLOR = (255, 0, 255)
+
+LINE_WINDOW_NAME = "Select nominal edge"
+ENTER_KEYS = frozenset({10, 13})
+ESCAPE_KEY = 27
+RESET_KEYS = frozenset({ord("r"), ord("R")})
 
 
 @dataclass(frozen=True)
@@ -74,6 +88,24 @@ class EdgeSelectionBuildResult:
 
     config: EdgeROIConfig
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EdgeSelectionGeometry:
+    """Store the four annotations collected by the OpenCV workflow."""
+
+    foreground_roi: RectROI
+    background_roi: RectROI
+    edge_roi: RectROI
+    nominal_edge: Line2D
+
+
+@dataclass
+class LineSelectionState:
+    """Track mutable mouse state while the user selects two endpoints."""
+
+    points: list[tuple[int, int]] = field(default_factory=list)
+    cursor: tuple[int, int] | None = None
 
 
 def parse_args(
@@ -163,6 +195,298 @@ def parse_args(
         default=defaults.transition_low_probability,
     )
     return parser.parse_args(argv)
+
+
+def depth_to_edge_display(depth: np.ndarray) -> np.ndarray:
+    """Convert one raw depth frame to an annotated-selection BGR image."""
+    if not isinstance(depth, np.ndarray):
+        raise TypeError(
+            f"depth must be a numpy.ndarray; got {type(depth).__name__}"
+        )
+    if depth.ndim != 2:
+        raise ValueError(
+            f"depth must have shape (H, W); got shape {depth.shape}"
+        )
+    if depth.dtype != np.uint16:
+        raise ValueError(
+            f"depth must have dtype uint16; got {depth.dtype}"
+        )
+
+    max_uint16 = np.iinfo(np.uint16).max
+    valid = (depth > 0) & (depth < max_uint16)
+    if not np.any(valid):
+        raise ValueError("Frame contains no displayable depth")
+
+    values = depth[valid]
+    lower = float(np.percentile(values, DISPLAY_PERCENTILE_LOW))
+    upper = float(np.percentile(values, DISPLAY_PERCENTILE_HIGH))
+    if upper <= lower:
+        raise ValueError("Invalid display depth range")
+
+    clipped = np.clip(depth.astype(np.float32), lower, upper)
+    normalized = (clipped - lower) / (upper - lower) * 255.0
+    gray = normalized.astype(np.uint8)
+    display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    display[~valid] = INVALID_COLOR
+    return display
+
+
+def choose_rectangle(
+    display_image: np.ndarray,
+    label: str,
+) -> RectROI:
+    """Select one named rectangle or raise without returning partial data."""
+    _validate_display_image(display_image)
+    if not isinstance(label, str) or not label:
+        raise ValueError("label must be a non-empty string")
+
+    window_name = f"Select {label} ROI"
+    try:
+        x, y, width, height = cv2.selectROI(
+            window_name,
+            display_image,
+            showCrosshair=True,
+            fromCenter=False,
+        )
+    finally:
+        cv2.destroyAllWindows()
+
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"{label} ROI selection was cancelled"
+        )
+    return RectROI(
+        x=int(x),
+        y=int(y),
+        width=int(width),
+        height=int(height),
+    )
+
+
+def choose_nominal_edge(
+    display_image: np.ndarray,
+) -> Line2D:
+    """Collect two line endpoints with reset, accept, and cancel controls."""
+    _validate_display_image(display_image)
+    base_image = display_image.copy()
+    state = LineSelectionState()
+
+    try:
+        cv2.namedWindow(LINE_WINDOW_NAME)
+        cv2.setMouseCallback(
+            LINE_WINDOW_NAME,
+            _line_mouse_callback,
+            state,
+        )
+        while True:
+            cv2.imshow(
+                LINE_WINDOW_NAME,
+                render_line_selection(base_image, state),
+            )
+            key = cv2.waitKey(20)
+            if key < 0:
+                continue
+            key &= 0xFF
+
+            if key == ESCAPE_KEY:
+                raise ValueError(
+                    "nominal edge selection was cancelled"
+                )
+            if key in RESET_KEYS:
+                state.points.clear()
+                state.cursor = None
+                continue
+            if key in ENTER_KEYS and len(state.points) == 2:
+                return Line2D(
+                    p1=state.points[0],
+                    p2=state.points[1],
+                )
+    finally:
+        cv2.destroyAllWindows()
+
+
+def render_line_selection(
+    base_image: np.ndarray,
+    state: LineSelectionState,
+) -> np.ndarray:
+    """Draw accepted points, a live segment, and keyboard instructions."""
+    _validate_display_image(base_image)
+    if not isinstance(state, LineSelectionState):
+        raise TypeError(
+            "state must be a LineSelectionState; "
+            f"got {type(state).__name__}"
+        )
+
+    rendered = base_image.copy()
+    if state.points:
+        first = state.points[0]
+        cv2.circle(rendered, first, 5, LINE_COLOR, -1)
+        cv2.putText(
+            rendered,
+            "p1",
+            (first[0] + 6, first[1] - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            LINE_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+
+        line_end = (
+            state.points[1]
+            if len(state.points) == 2
+            else state.cursor
+        )
+        if line_end is not None:
+            cv2.line(
+                rendered,
+                first,
+                line_end,
+                LINE_COLOR,
+                2,
+                cv2.LINE_AA,
+            )
+
+    if len(state.points) == 2:
+        second = state.points[1]
+        cv2.circle(rendered, second, 5, LINE_COLOR, -1)
+        cv2.putText(
+            rendered,
+            "p2",
+            (second[0] + 6, second[1] - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            LINE_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+
+    cv2.putText(
+        rendered,
+        "Click p1/p2 | Enter: accept | R: reset | Esc: cancel",
+        (10, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        LINE_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+    return rendered
+
+
+def collect_edge_selection(
+    display_image: np.ndarray,
+) -> EdgeSelectionGeometry:
+    """Run the three-rectangle and two-endpoint annotation sequence."""
+    _validate_display_image(display_image)
+
+    foreground_roi = choose_rectangle(
+        display_image,
+        "FOREGROUND reference",
+    )
+    with_foreground = draw_selection_rectangle(
+        display_image,
+        foreground_roi,
+        "F",
+        FOREGROUND_COLOR,
+    )
+
+    background_roi = choose_rectangle(
+        with_foreground,
+        "BACKGROUND reference",
+    )
+    with_references = draw_selection_rectangle(
+        with_foreground,
+        background_roi,
+        "B",
+        BACKGROUND_COLOR,
+    )
+
+    edge_roi = choose_rectangle(
+        with_references,
+        "EDGE analysis",
+    )
+    with_edge = draw_selection_rectangle(
+        with_references,
+        edge_roi,
+        "EDGE",
+        EDGE_COLOR,
+    )
+    nominal_edge = choose_nominal_edge(with_edge)
+
+    # Fail before configuration construction if the two references cannot
+    # define opposite foreground/background half-planes.
+    infer_foreground_side(
+        nominal_edge,
+        foreground_roi,
+        background_roi,
+    )
+    return EdgeSelectionGeometry(
+        foreground_roi=foreground_roi,
+        background_roi=background_roi,
+        edge_roi=edge_roi,
+        nominal_edge=nominal_edge,
+    )
+
+
+def draw_selection_rectangle(
+    image: np.ndarray,
+    roi: RectROI,
+    label: str,
+    color: tuple[int, int, int],
+) -> np.ndarray:
+    """Return a copy with one labeled rectangle for staged GUI context."""
+    _validate_display_image(image)
+    if not isinstance(roi, RectROI):
+        raise TypeError(
+            f"roi must be a RectROI; got {type(roi).__name__}"
+        )
+    if not isinstance(label, str) or not label:
+        raise ValueError("label must be a non-empty string")
+    if (
+        not isinstance(color, tuple)
+        or len(color) != 3
+        or any(
+            not isinstance(channel, int)
+            or isinstance(channel, bool)
+            or not 0 <= channel <= 255
+            for channel in color
+        )
+    ):
+        raise ValueError(
+            "color must contain three integer BGR channels"
+        )
+
+    height, width = image.shape[:2]
+    if roi.x + roi.width > width:
+        raise ValueError("ROI exceeds image width")
+    if roi.y + roi.height > height:
+        raise ValueError("ROI exceeds image height")
+
+    rendered = image.copy()
+    top_left = (roi.x, roi.y)
+    bottom_right = (
+        roi.x + roi.width - 1,
+        roi.y + roi.height - 1,
+    )
+    cv2.rectangle(
+        rendered,
+        top_left,
+        bottom_right,
+        color,
+        2,
+    )
+    cv2.putText(
+        rendered,
+        label,
+        (roi.x, max(12, roi.y - 5)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+    return rendered
 
 
 def analysis_options_from_args(
@@ -481,3 +805,46 @@ def _rectangles_overlap(first: RectROI, second: RectROI) -> bool:
         and first.y < second.y + second.height
         and second.y < first.y + first.height
     )
+
+
+def _line_mouse_callback(
+    event: int,
+    x: int,
+    y: int,
+    flags: int,
+    state: LineSelectionState,
+) -> None:
+    """Update the two-point selection state from OpenCV mouse events."""
+    del flags
+    if not isinstance(state, LineSelectionState):
+        raise TypeError(
+            "mouse callback state must be a LineSelectionState"
+        )
+
+    if event == cv2.EVENT_MOUSEMOVE:
+        state.cursor = (int(x), int(y))
+    elif event == cv2.EVENT_LBUTTONDOWN:
+        state.cursor = (int(x), int(y))
+        if len(state.points) < 2:
+            state.points.append((int(x), int(y)))
+
+
+def _validate_display_image(image: np.ndarray) -> None:
+    """Validate one uint8 BGR image used by the OpenCV selection GUI."""
+    if not isinstance(image, np.ndarray):
+        raise TypeError(
+            f"display image must be a numpy.ndarray; "
+            f"got {type(image).__name__}"
+        )
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(
+            "display image must have shape (H, W, 3)"
+        )
+    if image.dtype != np.uint8:
+        raise ValueError(
+            "display image must have dtype uint8"
+        )
+    if image.shape[0] == 0 or image.shape[1] == 0:
+        raise ValueError(
+            "display image dimensions must be positive"
+        )

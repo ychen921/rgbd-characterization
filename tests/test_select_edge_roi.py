@@ -3,6 +3,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from src.preprocessing.edge_roi import Line2D
@@ -326,3 +328,264 @@ def test_semantic_validation_warns_about_edge_band_coverage() -> None:
         "edge_roi does not cover max_edge_distance_px on "
         "the background side",
     )
+
+
+def test_depth_to_edge_display_marks_invalid_pixels() -> None:
+    depth = np.array(
+        [
+            [0, 100, 200],
+            [300, 400, 65535],
+        ],
+        dtype=np.uint16,
+    )
+
+    display = select_edge_roi_tool.depth_to_edge_display(depth)
+
+    assert display.shape == (2, 3, 3)
+    assert display.dtype == np.uint8
+    assert tuple(display[0, 0]) == (
+        select_edge_roi_tool.INVALID_COLOR
+    )
+    assert tuple(display[1, 2]) == (
+        select_edge_roi_tool.INVALID_COLOR
+    )
+    np.testing.assert_array_equal(
+        display[0, 1, 0],
+        display[0, 1, 1],
+    )
+
+
+@pytest.mark.parametrize(
+    "depth",
+    [
+        np.array([[0, 65535]], dtype=np.uint16),
+        np.full((2, 2), 500, dtype=np.uint16),
+    ],
+)
+def test_depth_to_edge_display_rejects_unusable_frame(
+    depth: np.ndarray,
+) -> None:
+    with pytest.raises(ValueError):
+        select_edge_roi_tool.depth_to_edge_display(depth)
+
+
+def test_choose_rectangle_returns_named_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool, bool]] = []
+
+    def fake_select_roi(
+        window_name: str,
+        image: np.ndarray,
+        *,
+        showCrosshair: bool,
+        fromCenter: bool,
+    ) -> tuple[int, int, int, int]:
+        assert image.shape == (10, 12, 3)
+        calls.append(
+            (window_name, showCrosshair, fromCenter)
+        )
+        return (2, 3, 4, 5)
+
+    monkeypatch.setattr(cv2, "selectROI", fake_select_roi)
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
+
+    roi = select_edge_roi_tool.choose_rectangle(
+        np.zeros((10, 12, 3), dtype=np.uint8),
+        "FOREGROUND reference",
+    )
+
+    assert roi == RectROI(x=2, y=3, width=4, height=5)
+    assert calls == [
+        ("Select FOREGROUND reference ROI", True, False)
+    ]
+
+
+def test_choose_rectangle_cancel_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cv2,
+        "selectROI",
+        lambda *args, **kwargs: (0, 0, 0, 0),
+    )
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
+
+    with pytest.raises(ValueError, match="EDGE.*cancelled"):
+        select_edge_roi_tool.choose_rectangle(
+            np.zeros((10, 12, 3), dtype=np.uint8),
+            "EDGE analysis",
+        )
+
+
+def _mock_line_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cv2, "namedWindow", lambda name: None)
+    monkeypatch.setattr(cv2, "imshow", lambda name, image: None)
+    monkeypatch.setattr(
+        cv2,
+        "destroyAllWindows",
+        lambda: None,
+    )
+
+    def capture_callback(
+        name: str,
+        callback: object,
+        state: object,
+    ) -> None:
+        captured["callback"] = callback
+        captured["state"] = state
+
+    monkeypatch.setattr(
+        cv2,
+        "setMouseCallback",
+        capture_callback,
+    )
+    return captured
+
+
+def test_choose_nominal_edge_accepts_two_clicked_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _mock_line_windows(monkeypatch)
+
+    def fake_wait_key(delay: int) -> int:
+        assert delay == 20
+        callback = captured["callback"]
+        state = captured["state"]
+        callback(cv2.EVENT_LBUTTONDOWN, 3, 1, 0, state)
+        callback(cv2.EVENT_LBUTTONDOWN, 3, 8, 0, state)
+        return 13
+
+    monkeypatch.setattr(cv2, "waitKey", fake_wait_key)
+
+    line = select_edge_roi_tool.choose_nominal_edge(
+        np.zeros((10, 12, 3), dtype=np.uint8)
+    )
+
+    assert line == Line2D(p1=(3.0, 1.0), p2=(3.0, 8.0))
+
+
+def test_choose_nominal_edge_reset_discards_old_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _mock_line_windows(monkeypatch)
+    call_count = 0
+
+    def fake_wait_key(delay: int) -> int:
+        nonlocal call_count
+        del delay
+        callback = captured["callback"]
+        state = captured["state"]
+        if call_count == 0:
+            callback(cv2.EVENT_LBUTTONDOWN, 1, 1, 0, state)
+            callback(cv2.EVENT_LBUTTONDOWN, 1, 8, 0, state)
+            call_count += 1
+            return ord("r")
+
+        callback(cv2.EVENT_LBUTTONDOWN, 4, 1, 0, state)
+        callback(cv2.EVENT_LBUTTONDOWN, 4, 8, 0, state)
+        return 13
+
+    monkeypatch.setattr(cv2, "waitKey", fake_wait_key)
+
+    line = select_edge_roi_tool.choose_nominal_edge(
+        np.zeros((10, 12, 3), dtype=np.uint8)
+    )
+
+    assert line == Line2D(p1=(4.0, 1.0), p2=(4.0, 8.0))
+
+
+def test_choose_nominal_edge_cancel_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_line_windows(monkeypatch)
+    monkeypatch.setattr(
+        cv2,
+        "waitKey",
+        lambda delay: select_edge_roi_tool.ESCAPE_KEY,
+    )
+
+    with pytest.raises(ValueError, match="nominal edge.*cancelled"):
+        select_edge_roi_tool.choose_nominal_edge(
+            np.zeros((10, 12, 3), dtype=np.uint8)
+        )
+
+
+def test_collect_edge_selection_runs_staged_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rectangles = iter(
+        [
+            RectROI(x=0, y=1, width=2, height=6),
+            RectROI(x=10, y=1, width=2, height=6),
+            RectROI(x=3, y=1, width=7, height=6),
+        ]
+    )
+    calls: list[tuple[str, int]] = []
+
+    def fake_choose_rectangle(
+        image: np.ndarray,
+        label: str,
+    ) -> RectROI:
+        calls.append((label, int(np.count_nonzero(image))))
+        return next(rectangles)
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "choose_rectangle",
+        fake_choose_rectangle,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "choose_nominal_edge",
+        lambda image: Line2D(
+            p1=(6.0, 1.0),
+            p2=(6.0, 7.0),
+        ),
+    )
+
+    selection = select_edge_roi_tool.collect_edge_selection(
+        np.zeros((10, 12, 3), dtype=np.uint8)
+    )
+
+    assert selection.foreground_roi.x == 0
+    assert selection.background_roi.x == 10
+    assert selection.edge_roi.x == 3
+    assert calls[0] == ("FOREGROUND reference", 0)
+    assert calls[1][0] == "BACKGROUND reference"
+    assert calls[1][1] > 0
+    assert calls[2][0] == "EDGE analysis"
+    assert calls[2][1] > calls[1][1]
+
+
+def test_collect_edge_selection_rejects_same_side_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rectangles = iter(
+        [
+            RectROI(x=0, y=1, width=2, height=6),
+            RectROI(x=3, y=1, width=2, height=6),
+            RectROI(x=5, y=1, width=3, height=6),
+        ]
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "choose_rectangle",
+        lambda image, label: next(rectangles),
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "choose_nominal_edge",
+        lambda image: Line2D(
+            p1=(6.0, 1.0),
+            p2=(6.0, 7.0),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="opposite sides"):
+        select_edge_roi_tool.collect_edge_selection(
+            np.zeros((10, 12, 3), dtype=np.uint8)
+        )
