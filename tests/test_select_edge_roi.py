@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import pytest
 
+from src.io.dataset import DepthDataset
 from src.preprocessing.edge_roi import Line2D
 from src.preprocessing.roi import RectROI
 from tools import select_edge_roi as select_edge_roi_tool
@@ -124,6 +125,66 @@ def test_resolve_selection_paths_reuses_repeat_key(
         / "roi_preview"
         / "scene04_edge_d050.png"
     )
+
+
+def test_load_edge_dataset_returns_valid_dataset(
+    tmp_path: Path,
+) -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        tmp_path / "data" / "scene04_edge_d050_r01",
+    )
+    paths.dataset_dir.mkdir(parents=True)
+    depth = (
+        np.arange(3 * 4 * 5, dtype=np.uint16)
+        .reshape(3, 4, 5)
+        + 1
+    )
+    timestamps_ns = np.array(
+        [100, 200, 300],
+        dtype=np.int64,
+    )
+    DepthDataset(
+        depth=depth,
+        timestamps_ns=timestamps_ns,
+    ).save(paths.dataset_path)
+
+    loaded = select_edge_roi_tool.load_edge_dataset(
+        paths.dataset_path
+    )
+
+    np.testing.assert_array_equal(loaded.depth, depth)
+    np.testing.assert_array_equal(
+        loaded.timestamps_ns,
+        timestamps_ns,
+    )
+
+
+def test_load_edge_dataset_rejects_missing_archive(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "missing" / "depth.npz"
+
+    with pytest.raises(
+        FileNotFoundError,
+        match=r"Cannot find dataset file .*depth\.npz",
+    ):
+        select_edge_roi_tool.load_edge_dataset(dataset_path)
+
+
+def test_load_edge_dataset_rejects_zero_frames(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "depth.npz"
+    DepthDataset(
+        depth=np.empty((0, 4, 5), dtype=np.uint16),
+        timestamps_ns=np.empty((0,), dtype=np.int64),
+    ).save(dataset_path)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Dataset contains no depth frames: .*depth\.npz",
+    ):
+        select_edge_roi_tool.load_edge_dataset(dataset_path)
 
 
 @pytest.mark.parametrize(

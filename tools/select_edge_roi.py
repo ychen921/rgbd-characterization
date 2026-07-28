@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.geometry.edge_geometry import compute_signed_distance_map
+from src.io.dataset import DepthDataset
 from src.preprocessing.edge_roi import (
     EdgeBleedingConfig,
     EdgeInvalidConfig,
@@ -533,6 +534,25 @@ def resolve_selection_paths(
         roi_path=roi_path,
         preview_path=preview_path,
     )
+
+
+def load_edge_dataset(
+    dataset_path: Path,
+) -> DepthDataset:
+    """Load one non-empty extracted depth dataset for edge selection."""
+    resolved_dataset_path = Path(dataset_path).expanduser()
+    if not resolved_dataset_path.is_file():
+        raise FileNotFoundError(
+            f"Cannot find dataset file {resolved_dataset_path}"
+        )
+
+    dataset = DepthDataset.load(resolved_dataset_path)
+    if dataset.num_frames == 0:
+        raise ValueError(
+            "Dataset contains no depth frames: "
+            f"{resolved_dataset_path}"
+        )
+    return dataset
 
 
 def infer_foreground_side(
