@@ -802,8 +802,9 @@ def _build_result_for_confirmation(
     )
 
 
-def test_render_edge_selection_overlay_draws_complete_review() -> None:
-    selection = select_edge_roi_tool.DatasetEdgeSelection(
+def _selection_for_preview(
+) -> select_edge_roi_tool.DatasetEdgeSelection:
+    return select_edge_roi_tool.DatasetEdgeSelection(
         frame=select_edge_roi_tool.EdgeSelectionFrame(
             frame_index=4,
             display_image=np.zeros(
@@ -836,7 +837,12 @@ def test_render_edge_selection_overlay_draws_complete_review() -> None:
             ),
         ),
     )
-    build_result = select_edge_roi_tool.build_dataset_edge_config(
+
+
+def _build_result_for_preview(
+    selection: select_edge_roi_tool.DatasetEdgeSelection,
+) -> select_edge_roi_tool.EdgeSelectionBuildResult:
+    return select_edge_roi_tool.build_dataset_edge_config(
         paths=select_edge_roi_tool.resolve_selection_paths(
             Path("data/scene04_edge_d050_r01")
         ),
@@ -845,9 +851,14 @@ def test_render_edge_selection_overlay_draws_complete_review() -> None:
             max_edge_distance_px=10.0,
         ),
     )
+
+
+def test_render_edge_preview_draws_clean_annotations() -> None:
+    selection = _selection_for_preview()
+    build_result = _build_result_for_preview(selection)
     original = selection.frame.display_image.copy()
 
-    rendered = select_edge_roi_tool.render_edge_selection_overlay(
+    rendered = select_edge_roi_tool.render_edge_preview(
         selection,
         build_result,
     )
@@ -870,6 +881,167 @@ def test_render_edge_selection_overlay_draws_complete_review() -> None:
     assert tuple(rendered[40, 60]) == (
         select_edge_roi_tool.LINE_COLOR
     )
+
+    rendered_again = select_edge_roi_tool.render_edge_preview(
+        selection,
+        build_result,
+    )
+    np.testing.assert_array_equal(rendered_again, rendered)
+
+
+def test_review_overlay_adds_controls_to_clean_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _selection_for_preview()
+    build_result = _build_result_for_preview(selection)
+    captured_text: list[str] = []
+    original_put_text = cv2.putText
+
+    def capture_put_text(
+        image: np.ndarray,
+        text: str,
+        origin: tuple[int, int],
+        font_face: int,
+        font_scale: float,
+        color: tuple[int, int, int],
+        thickness: int,
+        line_type: int,
+    ) -> np.ndarray:
+        captured_text.append(text)
+        return original_put_text(
+            image,
+            text,
+            origin,
+            font_face,
+            font_scale,
+            color,
+            thickness,
+            line_type,
+        )
+
+    monkeypatch.setattr(cv2, "putText", capture_put_text)
+
+    select_edge_roi_tool.render_edge_preview(
+        selection,
+        build_result,
+    )
+
+    assert any("frame=4" in text for text in captured_text)
+    assert any("foreground=left" in text for text in captured_text)
+    assert any("warnings=0" in text for text in captured_text)
+    assert not any("Enter:" in text for text in captured_text)
+
+    captured_text.clear()
+    select_edge_roi_tool.render_edge_selection_overlay(
+        selection,
+        build_result,
+    )
+
+    assert any("Enter:" in text for text in captured_text)
+
+
+def test_render_edge_preview_rejects_frame_mismatch() -> None:
+    selection = _selection_for_preview()
+    build_result = _build_result_for_preview(selection)
+    mismatched = replace(
+        selection,
+        frame=replace(
+            selection.frame,
+            frame_index=5,
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="frame index does not match",
+    ):
+        select_edge_roi_tool.render_edge_preview(
+            mismatched,
+            build_result,
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "foreground_roi",
+        "background_roi",
+        "edge_roi",
+        "nominal_edge",
+    ],
+)
+def test_render_edge_preview_rejects_geometry_mismatch(
+    field_name: str,
+) -> None:
+    selection = _selection_for_preview()
+    build_result = _build_result_for_preview(selection)
+    replacements: dict[str, object] = {
+        "foreground_roi": RectROI(
+            x=11,
+            y=10,
+            width=20,
+            height=70,
+        ),
+        "background_roi": RectROI(
+            x=89,
+            y=10,
+            width=20,
+            height=70,
+        ),
+        "edge_roi": RectROI(
+            x=41,
+            y=10,
+            width=39,
+            height=70,
+        ),
+        "nominal_edge": Line2D(
+            p1=(61.0, 10.0),
+            p2=(61.0, 80.0),
+        ),
+    }
+    mismatched = replace(
+        selection,
+        geometry=replace(
+            selection.geometry,
+            **{field_name: replacements[field_name]},
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"selection {field_name} does not match "
+            f"config {field_name}"
+        ),
+    ):
+        select_edge_roi_tool.render_edge_preview(
+            mismatched,
+            build_result,
+        )
+
+
+def test_render_edge_preview_rejects_invalid_display_image() -> None:
+    selection = _selection_for_preview()
+    build_result = _build_result_for_preview(selection)
+    invalid = replace(
+        selection,
+        frame=replace(
+            selection.frame,
+            display_image=np.zeros(
+                (100, 120),
+                dtype=np.uint8,
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"shape \(H, W, 3\)",
+    ):
+        select_edge_roi_tool.render_edge_preview(
+            invalid,
+            build_result,
+        )
 
 
 @pytest.mark.parametrize(

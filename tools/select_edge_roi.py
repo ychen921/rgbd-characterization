@@ -516,11 +516,11 @@ def draw_selection_rectangle(
     return rendered
 
 
-def render_edge_selection_overlay(
+def render_edge_preview(
     selection: DatasetEdgeSelection,
     build_result: EdgeSelectionBuildResult,
 ) -> np.ndarray:
-    """Render the complete validated selection for final review."""
+    """Render one clean, reproducible edge-selection preview."""
     if not isinstance(selection, DatasetEdgeSelection):
         raise TypeError(
             "selection must be a DatasetEdgeSelection; "
@@ -534,6 +534,17 @@ def render_edge_selection_overlay(
 
     _validate_display_image(selection.frame.display_image)
     config = build_result.config
+    if not isinstance(config, EdgeROIConfig):
+        raise TypeError(
+            "build_result.config must be an EdgeROIConfig; "
+            f"got {type(config).__name__}"
+        )
+    _validate_preview_consistency(selection, config)
+    validate_edge_roi_config(
+        config,
+        selection.frame.display_image.shape[:2],
+    )
+
     rendered = draw_selection_rectangle(
         selection.frame.display_image,
         config.foreground_roi,
@@ -578,7 +589,6 @@ def render_edge_selection_overlay(
 
     height = rendered.shape[0]
     status_y = max(18, height - 30)
-    controls_y = max(18, height - 10)
     cv2.putText(
         rendered,
         (
@@ -593,6 +603,19 @@ def render_edge_selection_overlay(
         1,
         cv2.LINE_AA,
     )
+    return rendered
+
+
+def render_edge_selection_overlay(
+    selection: DatasetEdgeSelection,
+    build_result: EdgeSelectionBuildResult,
+) -> np.ndarray:
+    """Add interactive review controls to the clean preview."""
+    rendered = render_edge_preview(
+        selection,
+        build_result,
+    )
+    controls_y = max(18, rendered.shape[0] - 10)
     cv2.putText(
         rendered,
         "Enter: accept | R: reselect | Esc: cancel",
@@ -1086,6 +1109,35 @@ def _rounded_image_point(
         int(round(point[0])),
         int(round(point[1])),
     )
+
+
+def _validate_preview_consistency(
+    selection: DatasetEdgeSelection,
+    config: EdgeROIConfig,
+) -> None:
+    """Reject previews whose image annotations do not match the config."""
+    if selection.frame.frame_index != config.source_frame_index:
+        raise ValueError(
+            "selection frame index does not match "
+            "config source frame index"
+        )
+
+    for field_name in (
+        "foreground_roi",
+        "background_roi",
+        "edge_roi",
+        "nominal_edge",
+    ):
+        selected_value = getattr(
+            selection.geometry,
+            field_name,
+        )
+        configured_value = getattr(config, field_name)
+        if selected_value != configured_value:
+            raise ValueError(
+                f"selection {field_name} does not match "
+                f"config {field_name}"
+            )
 
 
 def _raw_line_side(
