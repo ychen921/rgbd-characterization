@@ -1,9 +1,8 @@
-"""Interactive selection primitives for Scene 04 edge ROI configuration.
+"""Interactively select, review, and save Scene 04 edge ROI configuration.
 
-Persistence and final confirmation are intentionally added in a later
-implementation slice.  This module defines reproducible CLI options, pure
-configuration logic, and the OpenCV interactions that collect three
-rectangles plus a two-point nominal edge.
+The command collects foreground, background, and edge rectangles plus a
+two-point nominal edge, validates the resulting configuration, and saves a
+shared YAML document with a clean overlay preview.
 """
 
 import argparse
@@ -58,7 +57,7 @@ RESET_KEYS = frozenset({ord("r"), ord("R")})
 
 @dataclass(frozen=True)
 class EdgeAnalysisOptions:
-    """Store analysis values supplied by the future selection CLI."""
+    """Store analysis values supplied by the selection CLI."""
 
     distance_bin_px: float = 2.0
     max_edge_distance_px: float = 30.0
@@ -156,7 +155,7 @@ class LineSelectionState:
 def parse_args(
     argv: Sequence[str] | None = None,
 ) -> argparse.Namespace:
-    """Parse reproducible inputs for the future interactive selector."""
+    """Parse reproducible inputs for the interactive selector."""
     defaults = DEFAULT_ANALYSIS_OPTIONS
     parser = argparse.ArgumentParser(
         description=(
@@ -1166,6 +1165,122 @@ def save_confirmed_edge_selection(
     )
 
 
+def validate_existing_edge_selection_outputs(
+    paths: EdgeSelectionPaths,
+) -> bool:
+    """Return whether a complete, readable output pair already exists."""
+    if not isinstance(paths, EdgeSelectionPaths):
+        raise TypeError(
+            "paths must be an EdgeSelectionPaths; "
+            f"got {type(paths).__name__}"
+        )
+
+    roi_exists = paths.roi_path.exists()
+    preview_exists = paths.preview_path.exists()
+    if not roi_exists and not preview_exists:
+        return False
+    if roi_exists != preview_exists:
+        existing_path = (
+            paths.roi_path
+            if roi_exists
+            else paths.preview_path
+        )
+        missing_path = (
+            paths.preview_path
+            if roi_exists
+            else paths.roi_path
+        )
+        raise FileExistsError(
+            "Incomplete edge selection outputs: "
+            f"{existing_path} exists but {missing_path} is missing"
+        )
+
+    config = load_edge_roi_config(paths.roi_path)
+    if config.name != paths.roi_key:
+        raise ValueError(
+            "Existing edge ROI config name does not match "
+            f"the expected ROI key {paths.roi_key}"
+        )
+
+    preview = cv2.imread(
+        str(paths.preview_path),
+        cv2.IMREAD_COLOR,
+    )
+    if preview is None:
+        raise ValueError(
+            "Existing edge selection preview could not be loaded: "
+            f"{paths.preview_path}"
+        )
+    _validate_display_image(preview)
+    return True
+
+
+def select_edge_roi(
+    dataset_dir: Path,
+    *,
+    roi_root: Path = DEFAULT_ROI_ROOT,
+    preview_root: Path = DEFAULT_PREVIEW_ROOT,
+    frame_index: int | None = None,
+    options: EdgeAnalysisOptions | None = None,
+) -> EdgeSelectionOutputPaths:
+    """Run the complete edge ROI selection and persistence workflow."""
+    paths = resolve_selection_paths(
+        dataset_dir,
+        roi_root=roi_root,
+        preview_root=preview_root,
+    )
+
+    print("Dataset:")
+    print(f"  {paths.dataset_dir}")
+    print()
+    print("ROI key:")
+    print(f"  {paths.roi_key}")
+    print()
+    print("Configuration:")
+    print(f"  {paths.roi_path}")
+    print()
+    print("Preview:")
+    print(f"  {paths.preview_path}")
+    print()
+
+    if validate_existing_edge_selection_outputs(paths):
+        print("Edge ROI and preview already exist.")
+        print("Skipping edge selection.")
+        return EdgeSelectionOutputPaths(
+            roi_path=paths.roi_path,
+            preview_path=paths.preview_path,
+        )
+
+    dataset = load_edge_dataset(paths.dataset_path)
+    print("Selecting edge ROIs and nominal edge...")
+    confirmed = select_confirmed_edge_selection(
+        dataset=dataset,
+        paths=paths,
+        options=options,
+        frame_index=frame_index,
+    )
+    outputs = save_confirmed_edge_selection(
+        paths=paths,
+        confirmed=confirmed,
+    )
+
+    config = confirmed.build_result.config
+    print()
+    print("Saved and verified:")
+    print(f"  {outputs.roi_path}")
+    print(f"  {outputs.preview_path}")
+    print()
+    print("Source frame:")
+    print(f"  {config.source_frame_index}")
+    print()
+    print("Foreground side:")
+    print(f"  {config.foreground_side}")
+    print()
+    print("Warning count:")
+    print(f"  {len(confirmed.build_result.warnings)}")
+    return outputs
+
+
 def validate_selection_semantics(
     config: EdgeROIConfig,
     image_shape: tuple[int, int],
@@ -1389,3 +1504,30 @@ def _validate_display_image(image: np.ndarray) -> None:
         raise ValueError(
             "display image dimensions must be positive"
         )
+
+
+def main(
+    argv: Sequence[str] | None = None,
+) -> int:
+    """Run the interactive edge ROI selection command."""
+    args = parse_args(argv)
+    try:
+        options = analysis_options_from_args(args)
+        select_edge_roi(
+            dataset_dir=args.dataset_dir,
+            roi_root=args.roi_root,
+            preview_root=args.preview_root,
+            frame_index=args.frame_index,
+            options=options,
+        )
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+    except (OSError, ValueError, cv2.error) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

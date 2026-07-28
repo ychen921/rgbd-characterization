@@ -1578,6 +1578,282 @@ def test_save_confirmed_edge_selection_rejects_mismatched_selection(
     assert not paths.roi_path.exists()
 
 
+def test_validate_existing_outputs_accepts_repeat_reuse(
+    tmp_path: Path,
+) -> None:
+    first_paths = _temporary_output_paths(tmp_path)
+    select_edge_roi_tool.save_confirmed_edge_selection(
+        paths=first_paths,
+        confirmed=_confirmed_selection_for_output(),
+    )
+    repeat_paths = select_edge_roi_tool.resolve_selection_paths(
+        tmp_path / "data" / "scene04_edge_d050_r02",
+        roi_root=tmp_path / "config" / "roi",
+        preview_root=tmp_path / "results" / "roi_preview",
+    )
+
+    assert (
+        select_edge_roi_tool.validate_existing_edge_selection_outputs(
+            repeat_paths
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("existing_output", ["roi", "preview"])
+def test_validate_existing_outputs_rejects_incomplete_pair(
+    tmp_path: Path,
+    existing_output: str,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    existing_path = (
+        paths.roi_path
+        if existing_output == "roi"
+        else paths.preview_path
+    )
+    existing_path.parent.mkdir(parents=True)
+    existing_path.write_bytes(b"existing")
+
+    with pytest.raises(
+        FileExistsError,
+        match="Incomplete edge selection outputs",
+    ):
+        select_edge_roi_tool.validate_existing_edge_selection_outputs(
+            paths
+        )
+
+
+def test_validate_existing_outputs_rejects_planar_yaml(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    paths.roi_path.parent.mkdir(parents=True)
+    paths.roi_path.write_text(
+        "name: scene04_edge_d050\n"
+        "scene_type: planar\n",
+        encoding="utf-8",
+    )
+    paths.preview_path.parent.mkdir(parents=True)
+    paths.preview_path.write_bytes(b"preview")
+
+    with pytest.raises(ValueError, match="scene_type"):
+        select_edge_roi_tool.validate_existing_edge_selection_outputs(
+            paths
+        )
+
+
+def test_validate_existing_outputs_rejects_unreadable_preview(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    confirmed = _confirmed_selection_for_output()
+    select_edge_roi_tool.save_edge_roi_config(
+        paths.roi_path,
+        confirmed.build_result.config,
+    )
+    paths.preview_path.parent.mkdir(parents=True)
+    paths.preview_path.write_bytes(b"not a PNG")
+
+    with pytest.raises(
+        ValueError,
+        match="preview could not be loaded",
+    ):
+        select_edge_roi_tool.validate_existing_edge_selection_outputs(
+            paths
+        )
+
+
+def test_select_edge_roi_runs_complete_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_dir = (
+        tmp_path / "data" / "scene04_edge_d050_r01"
+    )
+    roi_root = tmp_path / "config" / "roi"
+    preview_root = tmp_path / "results" / "roi_preview"
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        dataset_dir,
+        roi_root=roi_root,
+        preview_root=preview_root,
+    )
+    dataset = _displayable_dataset(4)
+    confirmed = _confirmed_selection_for_output()
+    expected_outputs = select_edge_roi_tool.EdgeSelectionOutputPaths(
+        roi_path=paths.roi_path,
+        preview_path=paths.preview_path,
+    )
+    calls: dict[str, object] = {}
+
+    def fake_load(dataset_path: Path) -> DepthDataset:
+        calls["dataset_path"] = dataset_path
+        return dataset
+
+    def fake_select(
+        **kwargs: object,
+    ) -> select_edge_roi_tool.ConfirmedEdgeSelection:
+        calls["selection"] = kwargs
+        return confirmed
+
+    def fake_save(
+        **kwargs: object,
+    ) -> select_edge_roi_tool.EdgeSelectionOutputPaths:
+        calls["save"] = kwargs
+        return expected_outputs
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "load_edge_dataset",
+        fake_load,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "select_confirmed_edge_selection",
+        fake_select,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "save_confirmed_edge_selection",
+        fake_save,
+    )
+    options = _small_options()
+
+    outputs = select_edge_roi_tool.select_edge_roi(
+        dataset_dir,
+        roi_root=roi_root,
+        preview_root=preview_root,
+        frame_index=2,
+        options=options,
+    )
+
+    assert outputs is expected_outputs
+    assert calls["dataset_path"] == paths.dataset_path
+    selection_call = calls["selection"]
+    assert selection_call["dataset"] is dataset
+    assert selection_call["paths"] == paths
+    assert selection_call["options"] is options
+    assert selection_call["frame_index"] == 2
+    assert calls["save"] == {
+        "paths": paths,
+        "confirmed": confirmed,
+    }
+
+
+def test_select_edge_roi_skips_complete_existing_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_paths = _temporary_output_paths(tmp_path)
+    select_edge_roi_tool.save_confirmed_edge_selection(
+        paths=first_paths,
+        confirmed=_confirmed_selection_for_output(),
+    )
+
+    def fail_load(path: Path) -> DepthDataset:
+        raise AssertionError(f"Dataset should not be loaded: {path}")
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "load_edge_dataset",
+        fail_load,
+    )
+    outputs = select_edge_roi_tool.select_edge_roi(
+        tmp_path / "data" / "scene04_edge_d050_r02",
+        roi_root=tmp_path / "config" / "roi",
+        preview_root=tmp_path / "results" / "roi_preview",
+    )
+
+    assert outputs.roi_path == first_paths.roi_path
+    assert outputs.preview_path == first_paths.preview_path
+
+
+def test_main_forwards_cli_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_select_edge_roi(
+        dataset_dir: Path,
+        **kwargs: object,
+    ) -> select_edge_roi_tool.EdgeSelectionOutputPaths:
+        captured["dataset_dir"] = dataset_dir
+        captured.update(kwargs)
+        return select_edge_roi_tool.EdgeSelectionOutputPaths(
+            roi_path=tmp_path / "config.yaml",
+            preview_path=tmp_path / "preview.png",
+        )
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "select_edge_roi",
+        fake_select_edge_roi,
+    )
+    roi_root = tmp_path / "config" / "roi"
+    preview_root = tmp_path / "preview"
+
+    exit_code = select_edge_roi_tool.main(
+        [
+            "data/scene04_edge_d050_r01",
+            "--roi-root",
+            str(roi_root),
+            "--preview-root",
+            str(preview_root),
+            "--frame-index",
+            "12",
+            "--distance-bin-px",
+            "1",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["dataset_dir"] == Path(
+        "data/scene04_edge_d050_r01"
+    )
+    assert captured["roi_root"] == roi_root
+    assert captured["preview_root"] == preview_root
+    assert captured["frame_index"] == 12
+    options = captured["options"]
+    assert isinstance(
+        options,
+        select_edge_roi_tool.EdgeAnalysisOptions,
+    )
+    assert options.distance_bin_px == 1.0
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_message"),
+    [
+        (FileNotFoundError("missing dataset"), 1, "missing dataset"),
+        (ValueError("selection cancelled"), 1, "selection cancelled"),
+        (KeyboardInterrupt(), 130, "Interrupted"),
+    ],
+)
+def test_main_returns_cli_error_codes(
+    error: BaseException,
+    expected_code: int,
+    expected_message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_selection(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise error
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "select_edge_roi",
+        fail_selection,
+    )
+
+    exit_code = select_edge_roi_tool.main(
+        ["data/scene04_edge_d050_r01"]
+    )
+
+    assert exit_code == expected_code
+    assert expected_message in capsys.readouterr().err
+
+
 def test_build_rejects_nominal_line_missing_edge_roi() -> None:
     geometry = _selection_geometry()
     geometry["nominal_edge"] = Line2D(

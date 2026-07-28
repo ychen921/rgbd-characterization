@@ -81,6 +81,60 @@ config/roi/scene01_white_d050.yaml
 If that ROI file already exists, selection is skipped without overwriting it.
 Use `--roi-root PATH` to select a different configuration directory.
 
+## `select_edge_roi.py`
+
+Selects a foreground reference ROI, background reference ROI, edge analysis
+ROI, and two-point nominal edge from a representative depth frame.
+
+```bash
+python3 tools/select_edge_roi.py \
+    data/scene04_edge_d050_r01
+```
+
+The middle frame is used by default. Use `--frame-index INDEX` to select a
+different representative frame.
+
+The interaction order is:
+
+```text
+foreground reference ROI
+↓
+background reference ROI
+↓
+edge analysis ROI
+↓
+nominal edge p1 and p2
+↓
+final review
+```
+
+During nominal-edge and final review:
+
+```text
+Enter → accept
+R     → reselect
+Esc   → cancel
+```
+
+Accepted selections produce one shared configuration and clean preview:
+
+```text
+config/roi/scene04_edge_d050.yaml
+results/roi_preview/scene04_edge_d050.png
+```
+
+Repeats such as `r01`, `r02`, and `r03` share the same ROI key. When both
+outputs already exist and are readable, the tool skips selection. If only one
+output exists, or either existing output is invalid, the command fails without
+opening the GUI. Existing files are never overwritten.
+
+Use `--roi-root PATH` and `--preview-root PATH` to change the output
+directories. Show all analysis-threshold options with:
+
+```bash
+python3 tools/select_edge_roi.py --help
+```
+
 ## `analyze_baseline.py`
 
 Analyzes one extracted white-board baseline dataset inside its configured ROI.
