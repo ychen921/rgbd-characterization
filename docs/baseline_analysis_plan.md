@@ -57,31 +57,69 @@ inspect_dataset.py
 NPZ files can be loaded and inspected successfully
 ```
 
-Confirmed completed module:
+The planar implementation is complete through the dataset-level analysis
+entry point. The following components are implemented and covered by tests:
 
 ```text
+src/preprocessing/roi.py
+tools/select_roi.py
+src/preprocessing/depth.py
+src/metrics/depth_quality.py
+src/metrics/measured_depth.py
+src/geometry/camera.py
+src/geometry/plane_fitting.py
 src/metrics/planarity.py
+src/metrics/temporal.py
+tools/analyze_baseline.py
 ```
 
-The planarity stage now supports the planar-scene baseline. The remaining work is split into two tracks:
+The remaining planar work is validation and multi-dataset reporting:
 
 ```text
-Track A: planar baseline integration
-- finish remaining preprocessing/metric modules as needed
-- integrate tools/analyze_baseline.py
-- validate scene01_white_d050_r01
-- run repeats and cross-distance summaries
-
-Track B: Scene 04 edge extension
-- add multi-ROI edge configuration
-- add nominal edge-line annotation
-- implement signed-distance edge analysis
-- implement edge-specific metrics and reports
+- select a planar ROI for scene01_white_d050_r01
+- run and inspect the real baseline artifacts
+- validate repeat reuse when repeat datasets are available
+- analyze additional distances when datasets are available
+- implement tools/summarize_baseline.py
 ```
+
+The Scene 04 core configuration, selection, geometry, and metric layers are
+also implemented and covered by synthetic tests:
+
+```text
+src/preprocessing/edge_roi.py
+tools/select_edge_roi.py
+src/geometry/edge_geometry.py
+src/metrics/edge_discontinuity.py
+```
+
+`tools/select_edge_roi.py` now provides the complete interactive CLI,
+including three-ROI selection, nominal-edge annotation, foreground-side
+inference, final confirmation/reselection, clean preview generation, YAML/PNG
+persistence, repeat-key reuse, and no-overwrite protection. Its interaction
+and persistence workflow has also been manually exercised using
+`scene01_white_d050_r01`. That dataset is suitable for workflow validation but
+is not a controlled Scene 04 distance-discontinuity reference.
+
+The remaining Scene 04 work is:
+
+```text
+- implement src/visualization/edge.py
+- implement tools/analyze_edge.py
+- validate classification and profiles on a formal Scene 04 dataset
+- analyze repeats when datasets are available
+- implement tools/summarize_edge.py
+```
+
+A focused implementation audit passed all 398 directly related planar and
+Scene 04 tests. This test result confirms implementation behavior; it does not
+replace real-dataset metric validation.
 
 The next integration milestone remains:
 
-> Produce a validated planar baseline result for `scene01_white_d050_r01`, then implement and validate the Scene 04 edge analyzer without modifying the semantics of the planar metrics.
+> Produce and inspect a real planar baseline result for
+> `scene01_white_d050_r01`, then complete the Scene 04 visualization and
+> analysis entry point without modifying the semantics of the planar metrics.
 
 ---
 
@@ -323,33 +361,33 @@ Recommended implementation order:
 
 ```text
 Planar baseline
-1. Complete depth data semantic inspection
-2. Implement src/preprocessing/roi.py
-3. Implement tools/select_roi.py
-4. Select ROI for one 50 cm distance group
-5. Validate ROI reuse across repeats
-6. Implement src/preprocessing/depth.py
-7. Implement src/metrics/depth_quality.py
-8. Implement src/metrics/measured_depth.py
-9. Implement src/geometry/camera.py
-10. Implement src/geometry/plane_fitting.py
-11. Implement src/metrics/planarity.py                  [COMPLETED]
-12. Implement src/metrics/temporal.py
-13. Implement tools/analyze_baseline.py
-14. Validate scene01_white_d050_r01
-15. Analyze remaining repeats and distances
-16. Implement cross-distance summary
+1. Complete depth data semantic inspection                  [COMPLETED]
+2. Implement src/preprocessing/roi.py                       [COMPLETED]
+3. Implement tools/select_roi.py                            [COMPLETED]
+4. Select ROI for one 50 cm distance group                  [PENDING]
+5. Validate ROI reuse across repeats                        [DATA UNAVAILABLE]
+6. Implement src/preprocessing/depth.py                     [COMPLETED]
+7. Implement src/metrics/depth_quality.py                   [COMPLETED]
+8. Implement src/metrics/measured_depth.py                  [COMPLETED]
+9. Implement src/geometry/camera.py                         [COMPLETED]
+10. Implement src/geometry/plane_fitting.py                 [COMPLETED]
+11. Implement src/metrics/planarity.py                      [COMPLETED]
+12. Implement src/metrics/temporal.py                       [COMPLETED]
+13. Implement tools/analyze_baseline.py                     [COMPLETED]
+14. Validate scene01_white_d050_r01                         [PENDING]
+15. Analyze remaining repeats and distances                 [DATA UNAVAILABLE]
+16. Implement cross-distance summary                        [PENDING]
 
 Scene 04 extension
-17. Implement src/preprocessing/edge_roi.py
-18. Implement tools/select_edge_roi.py
-19. Implement src/geometry/edge_geometry.py
-20. Implement src/metrics/edge_discontinuity.py
-21. Implement src/visualization/edge.py
-22. Implement tools/analyze_edge.py
-23. Validate one Scene 04 dataset
-24. Validate repeat reuse and temporal stability
-25. Implement tools/summarize_edge.py
+17. Implement src/preprocessing/edge_roi.py                 [COMPLETED]
+18. Implement tools/select_edge_roi.py                      [COMPLETED]
+19. Implement src/geometry/edge_geometry.py                 [COMPLETED]
+20. Implement src/metrics/edge_discontinuity.py             [COMPLETED]
+21. Implement src/visualization/edge.py                      [PENDING]
+22. Implement tools/analyze_edge.py                          [PENDING]
+23. Validate one Scene 04 dataset                            [DATA UNAVAILABLE]
+24. Validate repeat reuse and temporal stability             [DATA UNAVAILABLE]
+25. Implement tools/summarize_edge.py                        [PENDING]
 ```
 
 ---
@@ -3012,18 +3050,16 @@ Do not merge planar residual RMSE and edge transition width into one generic qua
 
 ## 22. Immediate Next Tasks
 
-The confirmed completed item is:
-
-```text
-[x] src/metrics/planarity.py
-```
+Status was audited against the implementation and focused test suite. A checked
+item means the implementation and synthetic/automated tests are complete. It
+does not imply that real-dataset acceptance has been completed.
 
 Proceed in this order:
 
 ```text
 Planar baseline integration
 
-1. [ ] Confirm the current status of:
+1. [x] Confirm the current status of:
        - src/preprocessing/roi.py
        - tools/select_roi.py
        - src/preprocessing/depth.py
@@ -3033,9 +3069,9 @@ Planar baseline integration
        - src/geometry/plane_fitting.py
        - src/metrics/temporal.py
 
-2. [ ] Complete any missing planar baseline modules
+2. [x] Complete any missing planar baseline modules
 
-3. [ ] Implement or finish tools/analyze_baseline.py
+3. [x] Implement or finish tools/analyze_baseline.py
 
 4. [ ] Validate:
        scene01_white_d050_r01
@@ -3048,34 +3084,40 @@ Planar baseline integration
        - summary serialization
 
 6. [ ] Validate d050 ROI reuse across r01/r02/r03
+       BLOCKED: repeat datasets are not currently available
 
 7. [ ] Analyze remaining Scene 01 distances
+       BLOCKED: additional distance datasets are not currently available
 
 8. [ ] Implement tools/summarize_baseline.py
 
 
 Scene 04 extension
 
-9.  [ ] Implement src/preprocessing/edge_roi.py
+9.  [x] Implement src/preprocessing/edge_roi.py
         - Line2D
         - EdgeROIConfig
         - YAML load/save
         - bounds and intersection validation
 
-10. [ ] Implement tools/select_edge_roi.py
+10. [x] Implement tools/select_edge_roi.py
         - foreground ROI
         - background ROI
         - edge ROI
         - nominal edge line
-        - foreground-side confirmation
+        - foreground-side inference and confirmation
         - overlay preview
+        - final accept/reselect/cancel workflow
+        - YAML and PNG persistence
+        - repeat-key reuse and no-overwrite protection
+        - formal CLI entry point
 
-11. [ ] Implement src/geometry/edge_geometry.py
+11. [x] Implement src/geometry/edge_geometry.py
         - signed-distance map
         - sign normalization
         - edge/ROI intersection validation
 
-12. [ ] Implement src/metrics/edge_discontinuity.py
+12. [x] Implement src/metrics/edge_discontinuity.py
         - reference depth estimation
         - robust tolerance
         - edge classification
@@ -3093,16 +3135,19 @@ Scene 04 extension
         - probability profile
         - temporal metric plots
 
-14. [ ] Add Scene 04 synthetic tests
+14. [x] Add Scene 04 synthetic tests
 
 15. [ ] Implement tools/analyze_edge.py
 
 16. [ ] Validate:
         scene04_edge_d050_r01
+        BLOCKED: a formal Scene 04 dataset is not currently available
 
 17. [ ] Inspect classification and probability profile manually
+        BLOCKED: requires tools/analyze_edge.py and a formal Scene 04 dataset
 
 18. [ ] Analyze Scene 04 repeats
+        BLOCKED: Scene 04 repeat datasets are not currently available
 
 19. [ ] Implement tools/summarize_edge.py
 
@@ -3150,10 +3195,44 @@ The current work is divided into two sequential milestones.
 
 ### Milestone A: Complete Planar Baseline Integration
 
-Confirmed completed:
+Implementation status:
 
 ```text
+COMPLETED
+
+src/preprocessing/roi.py
+tools/select_roi.py
+src/preprocessing/depth.py
+src/metrics/depth_quality.py
+src/metrics/measured_depth.py
+src/geometry/camera.py
+src/geometry/plane_fitting.py
 src/metrics/planarity.py
+src/metrics/temporal.py
+tools/analyze_baseline.py
+```
+
+The implementation and automated integration tests are complete. Real-dataset
+acceptance is still pending because the planar ROI and baseline result
+artifacts are not currently present.
+
+Available inputs:
+
+```text
+data/scene01_white_d050_r01/depth.npz
+config/calib/depth_camera_info.yaml
+```
+
+Required next outputs:
+
+```text
+config/roi/scene01_white_d050.yaml
+results/scene01_white_d050_r01/baseline/summary.yaml
+results/scene01_white_d050_r01/baseline/frame_median_depth.csv
+results/scene01_white_d050_r01/baseline/frame_plane_metrics.csv
+results/scene01_white_d050_r01/baseline/temporal_std.npy
+results/scene01_white_d050_r01/baseline/zero_ratio_map.npy
+results/scene01_white_d050_r01/baseline/max_uint16_ratio_map.npy
 ```
 
 Target:
@@ -3184,6 +3263,42 @@ summary.yaml
 ```
 
 ### Milestone B: Scene 04 First Valid Result
+
+Completed foundation:
+
+```text
+src/preprocessing/edge_roi.py
+tools/select_edge_roi.py
+src/geometry/edge_geometry.py
+src/metrics/edge_discontinuity.py
+Scene 04 synthetic tests
+```
+
+The selection workflow has been manually exercised, including ROI/line
+annotation, confirmation, preview generation, and YAML/PNG persistence. The
+formal CLI entry point is covered by automated tests and a direct `--help`
+smoke test. The available `scene01_white_d050_r01` dataset was used only to
+validate workflow mechanics. Its foreground/background geometry is not a
+controlled Scene 04 distance setup and does not satisfy the formal metric
+acceptance milestone.
+
+Remaining implementation:
+
+```text
+src/visualization/edge.py
+tools/analyze_edge.py
+tools/summarize_edge.py
+```
+
+Remaining validation:
+
+```text
+formal Scene 04 dataset
+representative label-map inspection
+aggregate probability-profile inspection
+frame rejection and temporal stability inspection
+repeat and cross-distance analysis
+```
 
 Target:
 
