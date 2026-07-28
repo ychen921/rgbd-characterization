@@ -8,6 +8,7 @@ rectangles plus a two-point nominal edge.
 
 import argparse
 from dataclasses import dataclass, field
+from enum import Enum
 import math
 from pathlib import Path
 import sys
@@ -47,6 +48,7 @@ LINE_COLOR = (0, 0, 255)
 INVALID_COLOR = (255, 0, 255)
 
 LINE_WINDOW_NAME = "Select nominal edge"
+CONFIRM_WINDOW_NAME = "Review edge selection"
 ENTER_KEYS = frozenset({10, 13})
 ESCAPE_KEY = 27
 RESET_KEYS = frozenset({ord("r"), ord("R")})
@@ -69,6 +71,14 @@ class EdgeAnalysisOptions:
 
 
 DEFAULT_ANALYSIS_OPTIONS = EdgeAnalysisOptions()
+
+
+class ConfirmationAction(Enum):
+    """Represent one final edge-selection review decision."""
+
+    ACCEPT = "accept"
+    RETRY = "retry"
+    CANCEL = "cancel"
 
 
 @dataclass(frozen=True)
@@ -506,6 +516,132 @@ def draw_selection_rectangle(
     return rendered
 
 
+def render_edge_selection_overlay(
+    selection: DatasetEdgeSelection,
+    build_result: EdgeSelectionBuildResult,
+) -> np.ndarray:
+    """Render the complete validated selection for final review."""
+    if not isinstance(selection, DatasetEdgeSelection):
+        raise TypeError(
+            "selection must be a DatasetEdgeSelection; "
+            f"got {type(selection).__name__}"
+        )
+    if not isinstance(build_result, EdgeSelectionBuildResult):
+        raise TypeError(
+            "build_result must be an EdgeSelectionBuildResult; "
+            f"got {type(build_result).__name__}"
+        )
+
+    _validate_display_image(selection.frame.display_image)
+    config = build_result.config
+    rendered = draw_selection_rectangle(
+        selection.frame.display_image,
+        config.foreground_roi,
+        "F",
+        FOREGROUND_COLOR,
+    )
+    rendered = draw_selection_rectangle(
+        rendered,
+        config.background_roi,
+        "B",
+        BACKGROUND_COLOR,
+    )
+    rendered = draw_selection_rectangle(
+        rendered,
+        config.edge_roi,
+        "EDGE",
+        EDGE_COLOR,
+    )
+
+    p1 = _rounded_image_point(config.nominal_edge.p1)
+    p2 = _rounded_image_point(config.nominal_edge.p2)
+    cv2.line(
+        rendered,
+        p1,
+        p2,
+        LINE_COLOR,
+        2,
+        cv2.LINE_AA,
+    )
+    for label, point in (("p1", p1), ("p2", p2)):
+        cv2.circle(rendered, point, 5, LINE_COLOR, -1)
+        cv2.putText(
+            rendered,
+            label,
+            (point[0] + 6, point[1] - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            LINE_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+
+    height = rendered.shape[0]
+    status_y = max(18, height - 30)
+    controls_y = max(18, height - 10)
+    cv2.putText(
+        rendered,
+        (
+            f"frame={selection.frame.frame_index} | "
+            f"foreground={config.foreground_side} | "
+            f"warnings={len(build_result.warnings)}"
+        ),
+        (10, status_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        LINE_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        rendered,
+        "Enter: accept | R: reselect | Esc: cancel",
+        (10, controls_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        LINE_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+    return rendered
+
+
+def confirm_edge_selection(
+    selection: DatasetEdgeSelection,
+    build_result: EdgeSelectionBuildResult,
+) -> ConfirmationAction:
+    """Show the final review window and return the requested action."""
+    review_image = render_edge_selection_overlay(
+        selection,
+        build_result,
+    )
+    try:
+        cv2.namedWindow(CONFIRM_WINDOW_NAME)
+        while True:
+            cv2.imshow(CONFIRM_WINDOW_NAME, review_image)
+            if (
+                cv2.getWindowProperty(
+                    CONFIRM_WINDOW_NAME,
+                    cv2.WND_PROP_VISIBLE,
+                )
+                < 1
+            ):
+                return ConfirmationAction.CANCEL
+
+            key = cv2.waitKey(20)
+            if key < 0:
+                continue
+            key &= 0xFF
+            if key in ENTER_KEYS:
+                return ConfirmationAction.ACCEPT
+            if key in RESET_KEYS:
+                return ConfirmationAction.RETRY
+            if key == ESCAPE_KEY:
+                return ConfirmationAction.CANCEL
+    finally:
+        cv2.destroyAllWindows()
+
+
 def analysis_options_from_args(
     args: argparse.Namespace,
 ) -> EdgeAnalysisOptions:
@@ -813,6 +949,45 @@ def build_dataset_edge_config(
     )
 
 
+def select_confirmed_edge_config(
+    *,
+    dataset: DepthDataset,
+    paths: EdgeSelectionPaths,
+    options: EdgeAnalysisOptions | None = None,
+    frame_index: int | None = None,
+) -> EdgeSelectionBuildResult:
+    """Collect, validate, and review selections until accepted or cancelled."""
+    while True:
+        selection = collect_dataset_edge_selection(
+            dataset,
+            frame_index=frame_index,
+        )
+        build_result = build_dataset_edge_config(
+            paths=paths,
+            selection=selection,
+            options=options,
+        )
+
+        if build_result.warnings:
+            print("Selection warnings:")
+            for warning in build_result.warnings:
+                print(f"  - {warning}")
+            print()
+
+        action = confirm_edge_selection(
+            selection,
+            build_result,
+        )
+        if action is ConfirmationAction.ACCEPT:
+            return build_result
+        if action is ConfirmationAction.RETRY:
+            continue
+        raise ValueError(
+            "Edge selection was cancelled; "
+            "no configuration saved"
+        )
+
+
 def validate_selection_semantics(
     config: EdgeROIConfig,
     image_shape: tuple[int, int],
@@ -900,6 +1075,16 @@ def _roi_center(roi: RectROI) -> tuple[float, float]:
     return (
         roi.x + roi.width / 2.0,
         roi.y + roi.height / 2.0,
+    )
+
+
+def _rounded_image_point(
+    point: tuple[float, float],
+) -> tuple[int, int]:
+    """Round one floating-point annotation point for OpenCV drawing."""
+    return (
+        int(round(point[0])),
+        int(round(point[1])),
     )
 
 

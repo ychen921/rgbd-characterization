@@ -787,6 +787,352 @@ def test_build_dataset_edge_config_rejects_invalid_display() -> None:
         )
 
 
+def _build_result_for_confirmation(
+    *,
+    minimum_valid_count: int = 1,
+) -> select_edge_roi_tool.EdgeSelectionBuildResult:
+    return select_edge_roi_tool.build_dataset_edge_config(
+        paths=select_edge_roi_tool.resolve_selection_paths(
+            Path("data/scene04_edge_d050_r01")
+        ),
+        selection=_dataset_selection_for_config(),
+        options=_small_options(
+            minimum_valid_count=minimum_valid_count
+        ),
+    )
+
+
+def test_render_edge_selection_overlay_draws_complete_review() -> None:
+    selection = select_edge_roi_tool.DatasetEdgeSelection(
+        frame=select_edge_roi_tool.EdgeSelectionFrame(
+            frame_index=4,
+            display_image=np.zeros(
+                (100, 120, 3),
+                dtype=np.uint8,
+            ),
+        ),
+        geometry=select_edge_roi_tool.EdgeSelectionGeometry(
+            foreground_roi=RectROI(
+                x=10,
+                y=10,
+                width=20,
+                height=70,
+            ),
+            background_roi=RectROI(
+                x=90,
+                y=10,
+                width=20,
+                height=70,
+            ),
+            edge_roi=RectROI(
+                x=40,
+                y=10,
+                width=40,
+                height=70,
+            ),
+            nominal_edge=Line2D(
+                p1=(60.0, 10.0),
+                p2=(60.0, 80.0),
+            ),
+        ),
+    )
+    build_result = select_edge_roi_tool.build_dataset_edge_config(
+        paths=select_edge_roi_tool.resolve_selection_paths(
+            Path("data/scene04_edge_d050_r01")
+        ),
+        selection=selection,
+        options=_small_options(
+            max_edge_distance_px=10.0,
+        ),
+    )
+    original = selection.frame.display_image.copy()
+
+    rendered = select_edge_roi_tool.render_edge_selection_overlay(
+        selection,
+        build_result,
+    )
+
+    assert rendered.shape == original.shape
+    assert rendered.dtype == np.uint8
+    np.testing.assert_array_equal(
+        selection.frame.display_image,
+        original,
+    )
+    assert tuple(rendered[20, 10]) == (
+        select_edge_roi_tool.FOREGROUND_COLOR
+    )
+    assert tuple(rendered[20, 90]) == (
+        select_edge_roi_tool.BACKGROUND_COLOR
+    )
+    assert tuple(rendered[20, 40]) == (
+        select_edge_roi_tool.EDGE_COLOR
+    )
+    assert tuple(rendered[40, 60]) == (
+        select_edge_roi_tool.LINE_COLOR
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "expected_action"),
+    [
+        (13, select_edge_roi_tool.ConfirmationAction.ACCEPT),
+        (ord("r"), select_edge_roi_tool.ConfirmationAction.RETRY),
+        (ord("R"), select_edge_roi_tool.ConfirmationAction.RETRY),
+        (
+            select_edge_roi_tool.ESCAPE_KEY,
+            select_edge_roi_tool.ConfirmationAction.CANCEL,
+        ),
+    ],
+)
+def test_confirm_edge_selection_maps_review_keys(
+    key: int,
+    expected_action: select_edge_roi_tool.ConfirmationAction,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destroyed = False
+
+    monkeypatch.setattr(cv2, "namedWindow", lambda name: None)
+    monkeypatch.setattr(
+        cv2,
+        "imshow",
+        lambda name, image: None,
+    )
+    monkeypatch.setattr(
+        cv2,
+        "getWindowProperty",
+        lambda name, property_id: 1.0,
+    )
+    monkeypatch.setattr(cv2, "waitKey", lambda delay: key)
+
+    def mark_destroyed() -> None:
+        nonlocal destroyed
+        destroyed = True
+
+    monkeypatch.setattr(
+        cv2,
+        "destroyAllWindows",
+        mark_destroyed,
+    )
+
+    action = select_edge_roi_tool.confirm_edge_selection(
+        _dataset_selection_for_config(),
+        _build_result_for_confirmation(),
+    )
+
+    assert action is expected_action
+    assert destroyed
+
+
+def test_confirm_edge_selection_treats_closed_window_as_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cv2, "namedWindow", lambda name: None)
+    monkeypatch.setattr(
+        cv2,
+        "imshow",
+        lambda name, image: None,
+    )
+    monkeypatch.setattr(
+        cv2,
+        "getWindowProperty",
+        lambda name, property_id: 0.0,
+    )
+    monkeypatch.setattr(
+        cv2,
+        "waitKey",
+        lambda delay: pytest.fail(
+            "waitKey should not run after the window closes"
+        ),
+    )
+    monkeypatch.setattr(
+        cv2,
+        "destroyAllWindows",
+        lambda: None,
+    )
+
+    action = select_edge_roi_tool.confirm_edge_selection(
+        _dataset_selection_for_config(),
+        _build_result_for_confirmation(),
+    )
+
+    assert (
+        action
+        is select_edge_roi_tool.ConfirmationAction.CANCEL
+    )
+
+
+def test_select_confirmed_edge_config_returns_accepted_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _dataset_selection_for_config()
+    build_result = _build_result_for_confirmation(
+        minimum_valid_count=20
+    )
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_dataset_edge_selection",
+        lambda dataset, frame_index=None: selection,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "build_dataset_edge_config",
+        lambda **kwargs: build_result,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "confirm_edge_selection",
+        lambda selected, result: (
+            select_edge_roi_tool.ConfirmationAction.ACCEPT
+        ),
+    )
+
+    result = select_edge_roi_tool.select_confirmed_edge_config(
+        dataset=_displayable_dataset(4),
+        paths=paths,
+        options=_small_options(),
+    )
+
+    assert result is build_result
+    assert result.warnings
+
+
+def test_select_confirmed_edge_config_reselects_all_annotations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _dataset_selection_for_config()
+    build_result = _build_result_for_confirmation()
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    selection_calls = 0
+    actions = iter(
+        [
+            select_edge_roi_tool.ConfirmationAction.RETRY,
+            select_edge_roi_tool.ConfirmationAction.ACCEPT,
+        ]
+    )
+
+    def collect_again(
+        dataset: DepthDataset,
+        frame_index: int | None = None,
+    ) -> select_edge_roi_tool.DatasetEdgeSelection:
+        nonlocal selection_calls
+        del dataset, frame_index
+        selection_calls += 1
+        return selection
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_dataset_edge_selection",
+        collect_again,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "build_dataset_edge_config",
+        lambda **kwargs: build_result,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "confirm_edge_selection",
+        lambda selected, result: next(actions),
+    )
+
+    result = select_edge_roi_tool.select_confirmed_edge_config(
+        dataset=_displayable_dataset(4),
+        paths=paths,
+        options=_small_options(),
+    )
+
+    assert result is build_result
+    assert selection_calls == 2
+
+
+def test_select_confirmed_edge_config_cancel_does_not_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _dataset_selection_for_config()
+    build_result = _build_result_for_confirmation()
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_dataset_edge_selection",
+        lambda dataset, frame_index=None: selection,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "build_dataset_edge_config",
+        lambda **kwargs: build_result,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "confirm_edge_selection",
+        lambda selected, result: (
+            select_edge_roi_tool.ConfirmationAction.CANCEL
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no configuration saved",
+    ):
+        select_edge_roi_tool.select_confirmed_edge_config(
+            dataset=_displayable_dataset(4),
+            paths=paths,
+            options=_small_options(),
+        )
+
+
+def test_select_confirmed_edge_config_does_not_review_invalid_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _dataset_selection_for_config()
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    review_called = False
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_dataset_edge_selection",
+        lambda dataset, frame_index=None: selection,
+    )
+
+    def fail_validation(**kwargs: object) -> None:
+        raise ValueError("nominal edge does not intersect edge_roi")
+
+    def fail_review(
+        selected: select_edge_roi_tool.DatasetEdgeSelection,
+        result: select_edge_roi_tool.EdgeSelectionBuildResult,
+    ) -> select_edge_roi_tool.ConfirmationAction:
+        nonlocal review_called
+        del selected, result
+        review_called = True
+        raise AssertionError("Invalid config must not be reviewed")
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "build_dataset_edge_config",
+        fail_validation,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "confirm_edge_selection",
+        fail_review,
+    )
+
+    with pytest.raises(ValueError, match="does not intersect"):
+        select_edge_roi_tool.select_confirmed_edge_config(
+            dataset=_displayable_dataset(4),
+            paths=paths,
+            options=_small_options(),
+        )
+    assert not review_called
+
+
 def test_build_rejects_nominal_line_missing_edge_roi() -> None:
     geometry = _selection_geometry()
     geometry["nominal_edge"] = Line2D(
