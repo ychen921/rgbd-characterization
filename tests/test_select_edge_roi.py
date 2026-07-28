@@ -322,6 +322,163 @@ def test_prepare_selection_frame_rejects_unusable_middle_frame() -> None:
         select_edge_roi_tool.prepare_selection_frame(dataset)
 
 
+def _edge_selection_geometry(
+) -> select_edge_roi_tool.EdgeSelectionGeometry:
+    return select_edge_roi_tool.EdgeSelectionGeometry(
+        foreground_roi=RectROI(
+            x=0,
+            y=0,
+            width=2,
+            height=4,
+        ),
+        background_roi=RectROI(
+            x=3,
+            y=0,
+            width=2,
+            height=4,
+        ),
+        edge_roi=RectROI(
+            x=2,
+            y=0,
+            width=1,
+            height=4,
+        ),
+        nominal_edge=Line2D(
+            p1=(2.5, 0.0),
+            p2=(2.5, 4.0),
+        ),
+    )
+
+
+def test_collect_dataset_edge_selection_uses_middle_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _displayable_dataset(4)
+    expected_geometry = _edge_selection_geometry()
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_collect(
+        display_image: np.ndarray,
+    ) -> select_edge_roi_tool.EdgeSelectionGeometry:
+        captured["display_image"] = display_image.copy()
+        return expected_geometry
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_edge_selection",
+        fake_collect,
+    )
+
+    result = (
+        select_edge_roi_tool.collect_dataset_edge_selection(
+            dataset
+        )
+    )
+
+    assert result.frame.frame_index == 2
+    assert result.geometry is expected_geometry
+    assert captured["display_image"].shape == (4, 5, 3)
+    assert captured["display_image"].dtype == np.uint8
+    np.testing.assert_array_equal(
+        captured["display_image"],
+        result.frame.display_image,
+    )
+
+
+def test_collect_dataset_edge_selection_forwards_explicit_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _displayable_dataset(4)
+    expected_geometry = _edge_selection_geometry()
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_collect(
+        display_image: np.ndarray,
+    ) -> select_edge_roi_tool.EdgeSelectionGeometry:
+        captured["display_image"] = display_image.copy()
+        return expected_geometry
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_edge_selection",
+        fake_collect,
+    )
+
+    result = (
+        select_edge_roi_tool.collect_dataset_edge_selection(
+            dataset,
+            frame_index=1,
+        )
+    )
+
+    assert result.frame.frame_index == 1
+    np.testing.assert_array_equal(
+        captured["display_image"],
+        select_edge_roi_tool.depth_to_edge_display(
+            dataset.depth[1]
+        ),
+    )
+
+
+def test_collect_dataset_edge_selection_propagates_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _displayable_dataset(4)
+
+    def cancel_selection(
+        display_image: np.ndarray,
+    ) -> select_edge_roi_tool.EdgeSelectionGeometry:
+        del display_image
+        raise ValueError("EDGE ROI selection was cancelled")
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_edge_selection",
+        cancel_selection,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="EDGE ROI selection was cancelled",
+    ):
+        select_edge_roi_tool.collect_dataset_edge_selection(
+            dataset
+        )
+
+
+def test_collect_dataset_edge_selection_validates_frame_before_gui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = DepthDataset(
+        depth=np.full((2, 4, 5), 500, dtype=np.uint16),
+        timestamps_ns=np.array([100, 200], dtype=np.int64),
+    )
+    gui_called = False
+
+    def fail_if_called(
+        display_image: np.ndarray,
+    ) -> select_edge_roi_tool.EdgeSelectionGeometry:
+        nonlocal gui_called
+        del display_image
+        gui_called = True
+        raise AssertionError("GUI should not be called")
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_edge_selection",
+        fail_if_called,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid display depth range",
+    ):
+        select_edge_roi_tool.collect_dataset_edge_selection(
+            dataset
+        )
+    assert not gui_called
+
+
 @pytest.mark.parametrize(
     ("foreground_roi", "background_roi", "expected"),
     [

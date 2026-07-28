@@ -109,6 +109,14 @@ class EdgeSelectionFrame:
     display_image: np.ndarray
 
 
+@dataclass(frozen=True)
+class DatasetEdgeSelection:
+    """Store one representative frame and its collected edge geometry."""
+
+    frame: EdgeSelectionFrame
+    geometry: EdgeSelectionGeometry
+
+
 @dataclass
 class LineSelectionState:
     """Track mutable mouse state while the user selects two endpoints."""
@@ -601,6 +609,24 @@ def prepare_selection_frame(
         display_image=depth_to_edge_display(
             dataset.depth[selected_index]
         ),
+    )
+
+
+def collect_dataset_edge_selection(
+    dataset: DepthDataset,
+    frame_index: int | None = None,
+) -> DatasetEdgeSelection:
+    """Prepare one frame and collect all Scene 04 edge annotations."""
+    selection_frame = prepare_selection_frame(
+        dataset,
+        frame_index=frame_index,
+    )
+    geometry = collect_edge_selection(
+        selection_frame.display_image,
+    )
+    return DatasetEdgeSelection(
+        frame=selection_frame,
+        geometry=geometry,
     )
 
 
