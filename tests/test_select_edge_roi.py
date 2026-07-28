@@ -1305,6 +1305,279 @@ def test_select_confirmed_edge_config_does_not_review_invalid_config(
     assert not review_called
 
 
+def _confirmed_selection_for_output(
+) -> select_edge_roi_tool.ConfirmedEdgeSelection:
+    selection = _selection_for_preview()
+    return select_edge_roi_tool.ConfirmedEdgeSelection(
+        selection=selection,
+        build_result=_build_result_for_preview(selection),
+    )
+
+
+def _temporary_output_paths(
+    tmp_path: Path,
+) -> select_edge_roi_tool.EdgeSelectionPaths:
+    return select_edge_roi_tool.resolve_selection_paths(
+        tmp_path / "data" / "scene04_edge_d050_r01",
+        roi_root=tmp_path / "config" / "roi",
+        preview_root=tmp_path / "results" / "roi_preview",
+    )
+
+
+def test_select_confirmed_edge_selection_retains_annotations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _dataset_selection_for_config()
+    build_result = _build_result_for_confirmation()
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "collect_dataset_edge_selection",
+        lambda dataset, frame_index=None: selection,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "build_dataset_edge_config",
+        lambda **kwargs: build_result,
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "confirm_edge_selection",
+        lambda selected, result: (
+            select_edge_roi_tool.ConfirmationAction.ACCEPT
+        ),
+    )
+
+    confirmed = (
+        select_edge_roi_tool.select_confirmed_edge_selection(
+            dataset=_displayable_dataset(4),
+            paths=paths,
+            options=_small_options(),
+        )
+    )
+
+    assert confirmed.selection is selection
+    assert confirmed.build_result is build_result
+
+
+def test_save_confirmed_edge_selection_writes_verified_outputs(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    confirmed = _confirmed_selection_for_output()
+    expected_preview = select_edge_roi_tool.render_edge_preview(
+        confirmed.selection,
+        confirmed.build_result,
+    )
+
+    outputs = select_edge_roi_tool.save_confirmed_edge_selection(
+        paths=paths,
+        confirmed=confirmed,
+    )
+
+    assert outputs.roi_path == paths.roi_path
+    assert outputs.preview_path == paths.preview_path
+    assert paths.roi_path.is_file()
+    assert paths.preview_path.is_file()
+    assert (
+        select_edge_roi_tool.load_edge_roi_config(
+            paths.roi_path
+        )
+        == confirmed.build_result.config
+    )
+    loaded_preview = cv2.imread(
+        str(paths.preview_path),
+        cv2.IMREAD_COLOR,
+    )
+    np.testing.assert_array_equal(
+        loaded_preview,
+        expected_preview,
+    )
+
+
+def test_save_confirmed_edge_selection_preserves_existing_yaml(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    paths.roi_path.parent.mkdir(parents=True)
+    paths.roi_path.write_text(
+        "existing: planar\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        FileExistsError,
+        match="already exists",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=_confirmed_selection_for_output(),
+        )
+
+    assert (
+        paths.roi_path.read_text(encoding="utf-8")
+        == "existing: planar\n"
+    )
+    assert not paths.preview_path.exists()
+
+
+def test_save_confirmed_edge_selection_preserves_existing_preview(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    paths.preview_path.parent.mkdir(parents=True)
+    paths.preview_path.write_bytes(b"existing preview")
+
+    with pytest.raises(
+        FileExistsError,
+        match="already exists",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=_confirmed_selection_for_output(),
+        )
+
+    assert paths.preview_path.read_bytes() == b"existing preview"
+    assert not paths.roi_path.exists()
+
+
+def test_save_confirmed_edge_selection_handles_encode_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    monkeypatch.setattr(
+        cv2,
+        "imencode",
+        lambda extension, image: (False, None),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Failed to encode",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=_confirmed_selection_for_output(),
+        )
+
+    assert not paths.preview_path.exists()
+    assert not paths.roi_path.exists()
+
+
+def test_save_confirmed_edge_selection_cleans_preview_on_yaml_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+
+    def fail_yaml_save(
+        path: Path,
+        config: object,
+    ) -> None:
+        del path, config
+        raise OSError("simulated YAML failure")
+
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "save_edge_roi_config",
+        fail_yaml_save,
+    )
+
+    with pytest.raises(OSError, match="simulated YAML failure"):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=_confirmed_selection_for_output(),
+        )
+
+    assert not paths.preview_path.exists()
+    assert not paths.roi_path.exists()
+
+
+def test_save_confirmed_edge_selection_cleans_failed_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    confirmed = _confirmed_selection_for_output()
+    mismatched_config = replace(
+        confirmed.build_result.config,
+        name="different_name",
+    )
+    monkeypatch.setattr(
+        select_edge_roi_tool,
+        "load_edge_roi_config",
+        lambda path: mismatched_config,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="round-trip verification",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=confirmed,
+        )
+
+    assert not paths.preview_path.exists()
+    assert not paths.roi_path.exists()
+
+
+def test_save_confirmed_edge_selection_cleans_failed_preview_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    monkeypatch.setattr(
+        cv2,
+        "imread",
+        lambda path, mode: None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="preview failed verification",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=_confirmed_selection_for_output(),
+        )
+
+    assert not paths.preview_path.exists()
+    assert not paths.roi_path.exists()
+
+
+def test_save_confirmed_edge_selection_rejects_mismatched_selection(
+    tmp_path: Path,
+) -> None:
+    paths = _temporary_output_paths(tmp_path)
+    confirmed = _confirmed_selection_for_output()
+    invalid_selection = replace(
+        confirmed.selection,
+        frame=replace(
+            confirmed.selection.frame,
+            frame_index=5,
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="frame index does not match",
+    ):
+        select_edge_roi_tool.save_confirmed_edge_selection(
+            paths=paths,
+            confirmed=replace(
+                confirmed,
+                selection=invalid_selection,
+            ),
+        )
+
+    assert not paths.preview_path.exists()
+    assert not paths.roi_path.exists()
+
+
 def test_build_rejects_nominal_line_missing_edge_roi() -> None:
     geometry = _selection_geometry()
     geometry["nominal_edge"] = Line2D(

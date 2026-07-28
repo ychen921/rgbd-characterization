@@ -31,6 +31,8 @@ from src.preprocessing.edge_roi import (
     EdgeROIConfig,
     EdgeTransitionConfig,
     Line2D,
+    load_edge_roi_config,
+    save_edge_roi_config,
     validate_edge_roi_config,
 )
 from src.preprocessing.roi import RectROI, derive_roi_key, get_roi_path
@@ -125,6 +127,22 @@ class DatasetEdgeSelection:
 
     frame: EdgeSelectionFrame
     geometry: EdgeSelectionGeometry
+
+
+@dataclass(frozen=True)
+class ConfirmedEdgeSelection:
+    """Retain the accepted annotations and their validated config."""
+
+    selection: DatasetEdgeSelection
+    build_result: EdgeSelectionBuildResult
+
+
+@dataclass(frozen=True)
+class EdgeSelectionOutputPaths:
+    """Store the two files created for one accepted selection."""
+
+    roi_path: Path
+    preview_path: Path
 
 
 @dataclass
@@ -972,13 +990,13 @@ def build_dataset_edge_config(
     )
 
 
-def select_confirmed_edge_config(
+def select_confirmed_edge_selection(
     *,
     dataset: DepthDataset,
     paths: EdgeSelectionPaths,
     options: EdgeAnalysisOptions | None = None,
     frame_index: int | None = None,
-) -> EdgeSelectionBuildResult:
+) -> ConfirmedEdgeSelection:
     """Collect, validate, and review selections until accepted or cancelled."""
     while True:
         selection = collect_dataset_edge_selection(
@@ -1002,13 +1020,150 @@ def select_confirmed_edge_config(
             build_result,
         )
         if action is ConfirmationAction.ACCEPT:
-            return build_result
+            return ConfirmedEdgeSelection(
+                selection=selection,
+                build_result=build_result,
+            )
         if action is ConfirmationAction.RETRY:
             continue
         raise ValueError(
             "Edge selection was cancelled; "
             "no configuration saved"
         )
+
+
+def select_confirmed_edge_config(
+    *,
+    dataset: DepthDataset,
+    paths: EdgeSelectionPaths,
+    options: EdgeAnalysisOptions | None = None,
+    frame_index: int | None = None,
+) -> EdgeSelectionBuildResult:
+    """Return only the config result for backward-compatible callers."""
+    confirmed = select_confirmed_edge_selection(
+        dataset=dataset,
+        paths=paths,
+        options=options,
+        frame_index=frame_index,
+    )
+    return confirmed.build_result
+
+
+def save_confirmed_edge_selection(
+    *,
+    paths: EdgeSelectionPaths,
+    confirmed: ConfirmedEdgeSelection,
+) -> EdgeSelectionOutputPaths:
+    """Save one accepted edge config and preview without overwriting."""
+    if not isinstance(paths, EdgeSelectionPaths):
+        raise TypeError(
+            "paths must be an EdgeSelectionPaths; "
+            f"got {type(paths).__name__}"
+        )
+    if not isinstance(confirmed, ConfirmedEdgeSelection):
+        raise TypeError(
+            "confirmed must be a ConfirmedEdgeSelection; "
+            f"got {type(confirmed).__name__}"
+        )
+    if not isinstance(
+        confirmed.selection,
+        DatasetEdgeSelection,
+    ):
+        raise TypeError(
+            "confirmed.selection must be a DatasetEdgeSelection; "
+            f"got {type(confirmed.selection).__name__}"
+        )
+    if not isinstance(
+        confirmed.build_result,
+        EdgeSelectionBuildResult,
+    ):
+        raise TypeError(
+            "confirmed.build_result must be an "
+            "EdgeSelectionBuildResult; "
+            f"got {type(confirmed.build_result).__name__}"
+        )
+
+    config = confirmed.build_result.config
+    if not isinstance(config, EdgeROIConfig):
+        raise TypeError(
+            "confirmed.build_result.config must be an EdgeROIConfig; "
+            f"got {type(config).__name__}"
+        )
+    if config.name != paths.roi_key:
+        raise ValueError(
+            "config name does not match the output ROI key"
+        )
+    if config.source_experiment != paths.experiment_name:
+        raise ValueError(
+            "config source experiment does not match "
+            "the output experiment"
+        )
+
+    for output_path in (paths.roi_path, paths.preview_path):
+        if output_path.exists():
+            raise FileExistsError(
+                f"Edge selection output already exists: {output_path}"
+            )
+
+    preview = render_edge_preview(
+        confirmed.selection,
+        confirmed.build_result,
+    )
+    encode_success, encoded_preview = cv2.imencode(
+        ".png",
+        preview,
+    )
+    if not encode_success or encoded_preview is None:
+        raise ValueError("Failed to encode edge selection preview")
+
+    preview_created = False
+    roi_created = False
+    try:
+        paths.preview_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        with paths.preview_path.open("xb") as stream:
+            preview_created = True
+            stream.write(encoded_preview.tobytes())
+
+        save_edge_roi_config(
+            paths.roi_path,
+            config,
+        )
+        roi_created = True
+
+        loaded_config = load_edge_roi_config(paths.roi_path)
+        if loaded_config != config:
+            raise ValueError(
+                "Saved edge ROI configuration failed "
+                "round-trip verification"
+            )
+
+        loaded_preview = cv2.imread(
+            str(paths.preview_path),
+            cv2.IMREAD_COLOR,
+        )
+        if (
+            loaded_preview is None
+            or loaded_preview.shape != preview.shape
+            or loaded_preview.dtype != preview.dtype
+            or not np.array_equal(loaded_preview, preview)
+        ):
+            raise ValueError(
+                "Saved edge selection preview failed verification"
+            )
+    except Exception:
+        if roi_created:
+            _remove_created_output(paths.roi_path)
+        if preview_created:
+            _remove_created_output(paths.preview_path)
+        raise
+
+    return EdgeSelectionOutputPaths(
+        roi_path=paths.roi_path,
+        preview_path=paths.preview_path,
+    )
 
 
 def validate_selection_semantics(
@@ -1138,6 +1293,14 @@ def _validate_preview_consistency(
                 f"selection {field_name} does not match "
                 f"config {field_name}"
             )
+
+
+def _remove_created_output(path: Path) -> None:
+    """Best-effort cleanup for an output created by the current call."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _raw_line_side(
