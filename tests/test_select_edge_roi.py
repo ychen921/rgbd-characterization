@@ -187,6 +187,141 @@ def test_load_edge_dataset_rejects_zero_frames(
         select_edge_roi_tool.load_edge_dataset(dataset_path)
 
 
+def _displayable_dataset(num_frames: int) -> DepthDataset:
+    depth = (
+        np.arange(num_frames * 4 * 5, dtype=np.uint16)
+        .reshape(num_frames, 4, 5)
+        + 1
+    )
+    timestamps_ns = np.arange(
+        num_frames,
+        dtype=np.int64,
+    )
+    return DepthDataset(
+        depth=depth,
+        timestamps_ns=timestamps_ns,
+    )
+
+
+@pytest.mark.parametrize(
+    ("num_frames", "expected_index"),
+    [
+        (4, 2),
+        (5, 2),
+    ],
+)
+def test_prepare_selection_frame_uses_middle_frame_by_default(
+    num_frames: int,
+    expected_index: int,
+) -> None:
+    dataset = _displayable_dataset(num_frames)
+    original_depth = dataset.depth.copy()
+
+    result = select_edge_roi_tool.prepare_selection_frame(dataset)
+
+    assert result.frame_index == expected_index
+    assert result.display_image.shape == (4, 5, 3)
+    assert result.display_image.dtype == np.uint8
+    np.testing.assert_array_equal(dataset.depth, original_depth)
+
+
+def test_prepare_selection_frame_accepts_explicit_index() -> None:
+    dataset = _displayable_dataset(5)
+
+    result = select_edge_roi_tool.prepare_selection_frame(
+        dataset,
+        frame_index=1,
+    )
+
+    assert result.frame_index == 1
+    np.testing.assert_array_equal(
+        result.display_image,
+        select_edge_roi_tool.depth_to_edge_display(
+            dataset.depth[1]
+        ),
+    )
+
+
+@pytest.mark.parametrize("frame_index", [-1, 3])
+def test_prepare_selection_frame_rejects_out_of_range_index(
+    frame_index: int,
+) -> None:
+    dataset = _displayable_dataset(3)
+
+    with pytest.raises(
+        ValueError,
+        match=r"0 <= frame_index < 3",
+    ):
+        select_edge_roi_tool.prepare_selection_frame(
+            dataset,
+            frame_index=frame_index,
+        )
+
+
+@pytest.mark.parametrize("frame_index", [True, 1.5])
+def test_prepare_selection_frame_rejects_non_integer_index(
+    frame_index: object,
+) -> None:
+    dataset = _displayable_dataset(3)
+
+    with pytest.raises(
+        TypeError,
+        match="integer or None",
+    ):
+        select_edge_roi_tool.prepare_selection_frame(
+            dataset,
+            frame_index=frame_index,
+        )
+
+
+def test_prepare_selection_frame_rejects_empty_dataset() -> None:
+    dataset = DepthDataset(
+        depth=np.empty((0, 4, 5), dtype=np.uint16),
+        timestamps_ns=np.empty((0,), dtype=np.int64),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no depth frames",
+    ):
+        select_edge_roi_tool.prepare_selection_frame(dataset)
+
+
+def test_prepare_selection_frame_rejects_non_dataset() -> None:
+    with pytest.raises(
+        TypeError,
+        match="dataset must be a DepthDataset",
+    ):
+        select_edge_roi_tool.prepare_selection_frame(
+            np.zeros((2, 4, 5), dtype=np.uint16)
+        )
+
+
+def test_prepare_selection_frame_rejects_unusable_middle_frame() -> None:
+    dataset = DepthDataset(
+        depth=np.array(
+            [
+                [
+                    [100, 200],
+                    [300, 400],
+                ],
+                [
+                    [500, 500],
+                    [500, 500],
+                ],
+            ],
+            dtype=np.uint16,
+        ),
+        timestamps_ns=np.array([100, 200], dtype=np.int64),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid display depth range",
+    ):
+        select_edge_roi_tool.prepare_selection_frame(dataset)
+
+
 @pytest.mark.parametrize(
     ("foreground_roi", "background_roi", "expected"),
     [

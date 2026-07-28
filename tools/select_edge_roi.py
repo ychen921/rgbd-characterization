@@ -101,6 +101,14 @@ class EdgeSelectionGeometry:
     nominal_edge: Line2D
 
 
+@dataclass(frozen=True)
+class EdgeSelectionFrame:
+    """Store the representative frame index and display-only image."""
+
+    frame_index: int
+    display_image: np.ndarray
+
+
 @dataclass
 class LineSelectionState:
     """Track mutable mouse state while the user selects two endpoints."""
@@ -553,6 +561,47 @@ def load_edge_dataset(
             f"{resolved_dataset_path}"
         )
     return dataset
+
+
+def prepare_selection_frame(
+    dataset: DepthDataset,
+    frame_index: int | None = None,
+) -> EdgeSelectionFrame:
+    """Select one representative frame and build its display image."""
+    if not isinstance(dataset, DepthDataset):
+        raise TypeError(
+            "dataset must be a DepthDataset; "
+            f"got {type(dataset).__name__}"
+        )
+    if dataset.num_frames == 0:
+        raise ValueError("Dataset contains no depth frames")
+
+    if frame_index is None:
+        selected_index = dataset.num_frames // 2
+    else:
+        if not isinstance(frame_index, int) or isinstance(
+            frame_index,
+            bool,
+        ):
+            raise TypeError(
+                "frame_index must be an integer or None; "
+                f"got {type(frame_index).__name__}"
+            )
+        selected_index = frame_index
+
+    if selected_index < 0 or selected_index >= dataset.num_frames:
+        raise ValueError(
+            "frame_index must satisfy "
+            f"0 <= frame_index < {dataset.num_frames}; "
+            f"got {selected_index}"
+        )
+
+    return EdgeSelectionFrame(
+        frame_index=selected_index,
+        display_image=depth_to_edge_display(
+            dataset.depth[selected_index]
+        ),
+    )
 
 
 def infer_foreground_side(
