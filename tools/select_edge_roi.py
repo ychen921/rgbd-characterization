@@ -767,6 +767,52 @@ def build_edge_roi_config(
     )
 
 
+def build_dataset_edge_config(
+    *,
+    paths: EdgeSelectionPaths,
+    selection: DatasetEdgeSelection,
+    options: EdgeAnalysisOptions | None = None,
+) -> EdgeSelectionBuildResult:
+    """Build a validated config from one collected dataset selection."""
+    if not isinstance(paths, EdgeSelectionPaths):
+        raise TypeError(
+            "paths must be an EdgeSelectionPaths; "
+            f"got {type(paths).__name__}"
+        )
+    if not isinstance(selection, DatasetEdgeSelection):
+        raise TypeError(
+            "selection must be a DatasetEdgeSelection; "
+            f"got {type(selection).__name__}"
+        )
+    if not isinstance(selection.frame, EdgeSelectionFrame):
+        raise TypeError(
+            "selection.frame must be an EdgeSelectionFrame; "
+            f"got {type(selection.frame).__name__}"
+        )
+    if not isinstance(
+        selection.geometry,
+        EdgeSelectionGeometry,
+    ):
+        raise TypeError(
+            "selection.geometry must be an EdgeSelectionGeometry; "
+            f"got {type(selection.geometry).__name__}"
+        )
+
+    _validate_display_image(selection.frame.display_image)
+    geometry = selection.geometry
+    return build_edge_roi_config(
+        name=paths.roi_key,
+        source_experiment=paths.experiment_name,
+        source_frame_index=selection.frame.frame_index,
+        foreground_roi=geometry.foreground_roi,
+        background_roi=geometry.background_roi,
+        edge_roi=geometry.edge_roi,
+        nominal_edge=geometry.nominal_edge,
+        image_shape=selection.frame.display_image.shape[:2],
+        options=options,
+    )
+
+
 def validate_selection_semantics(
     config: EdgeROIConfig,
     image_shape: tuple[int, int],

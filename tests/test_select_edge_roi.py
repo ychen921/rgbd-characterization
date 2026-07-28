@@ -596,6 +596,197 @@ def test_build_edge_roi_config_constructs_valid_nested_config() -> None:
     assert result.warnings == ()
 
 
+def _dataset_selection_for_config(
+) -> select_edge_roi_tool.DatasetEdgeSelection:
+    values = _selection_geometry()
+    image_shape = values["image_shape"]
+    assert isinstance(image_shape, tuple)
+    return select_edge_roi_tool.DatasetEdgeSelection(
+        frame=select_edge_roi_tool.EdgeSelectionFrame(
+            frame_index=values["source_frame_index"],
+            display_image=np.zeros(
+                (*image_shape, 3),
+                dtype=np.uint8,
+            ),
+        ),
+        geometry=select_edge_roi_tool.EdgeSelectionGeometry(
+            foreground_roi=values["foreground_roi"],
+            background_roi=values["background_roi"],
+            edge_roi=values["edge_roi"],
+            nominal_edge=values["nominal_edge"],
+        ),
+    )
+
+
+def test_build_dataset_edge_config_maps_selection_metadata() -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r03")
+    )
+    selection = _dataset_selection_for_config()
+    options = _small_options()
+
+    result = select_edge_roi_tool.build_dataset_edge_config(
+        paths=paths,
+        selection=selection,
+        options=options,
+    )
+
+    assert result.config.name == "scene04_edge_d050"
+    assert (
+        result.config.source_experiment
+        == "scene04_edge_d050_r03"
+    )
+    assert result.config.source_frame_index == 4
+    assert (
+        result.config.foreground_roi
+        == selection.geometry.foreground_roi
+    )
+    assert (
+        result.config.background_roi
+        == selection.geometry.background_roi
+    )
+    assert result.config.edge_roi == selection.geometry.edge_roi
+    assert (
+        result.config.nominal_edge
+        == selection.geometry.nominal_edge
+    )
+    assert result.config.foreground_side == "left"
+    assert result.config.distance_bin_px == options.distance_bin_px
+    assert (
+        result.config.reference.minimum_valid_count
+        == options.minimum_valid_count
+    )
+    assert result.warnings == ()
+
+
+def test_build_dataset_edge_config_uses_default_options() -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+
+    result = select_edge_roi_tool.build_dataset_edge_config(
+        paths=paths,
+        selection=_dataset_selection_for_config(),
+    )
+
+    defaults = select_edge_roi_tool.DEFAULT_ANALYSIS_OPTIONS
+    assert result.config.distance_bin_px == defaults.distance_bin_px
+    assert (
+        result.config.max_edge_distance_px
+        == defaults.max_edge_distance_px
+    )
+    assert (
+        result.config.transition.high_probability
+        == defaults.transition_high_probability
+    )
+    assert (
+        result.config.transition.low_probability
+        == defaults.transition_low_probability
+    )
+
+
+def test_build_dataset_edge_config_returns_semantic_warnings() -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+
+    result = select_edge_roi_tool.build_dataset_edge_config(
+        paths=paths,
+        selection=_dataset_selection_for_config(),
+        options=_small_options(minimum_valid_count=20),
+    )
+
+    assert result.warnings == (
+        "foreground_roi has 12 pixels, fewer than "
+        "minimum_valid_count 20",
+        "background_roi has 12 pixels, fewer than "
+        "minimum_valid_count 20",
+    )
+
+
+def test_build_dataset_edge_config_rejects_missing_intersection() -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    selection = _dataset_selection_for_config()
+    invalid_geometry = replace(
+        selection.geometry,
+        nominal_edge=Line2D(
+            p1=(2.0, 0.0),
+            p2=(2.0, 8.0),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="does not intersect"):
+        select_edge_roi_tool.build_dataset_edge_config(
+            paths=paths,
+            selection=replace(
+                selection,
+                geometry=invalid_geometry,
+            ),
+            options=_small_options(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value", "expected_message"),
+    [
+        (
+            "paths",
+            Path("data/scene04_edge_d050_r01"),
+            "paths must be an EdgeSelectionPaths",
+        ),
+        (
+            "selection",
+            object(),
+            "selection must be a DatasetEdgeSelection",
+        ),
+    ],
+)
+def test_build_dataset_edge_config_rejects_invalid_inputs(
+    field_name: str,
+    invalid_value: object,
+    expected_message: str,
+) -> None:
+    arguments: dict[str, object] = {
+        "paths": select_edge_roi_tool.resolve_selection_paths(
+            Path("data/scene04_edge_d050_r01")
+        ),
+        "selection": _dataset_selection_for_config(),
+        "options": _small_options(),
+    }
+    arguments[field_name] = invalid_value
+
+    with pytest.raises(TypeError, match=expected_message):
+        select_edge_roi_tool.build_dataset_edge_config(
+            **arguments,
+        )
+
+
+def test_build_dataset_edge_config_rejects_invalid_display() -> None:
+    paths = select_edge_roi_tool.resolve_selection_paths(
+        Path("data/scene04_edge_d050_r01")
+    )
+    selection = _dataset_selection_for_config()
+    invalid_frame = replace(
+        selection.frame,
+        display_image=np.zeros((10, 12), dtype=np.uint8),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"shape \(H, W, 3\)",
+    ):
+        select_edge_roi_tool.build_dataset_edge_config(
+            paths=paths,
+            selection=replace(
+                selection,
+                frame=invalid_frame,
+            ),
+            options=_small_options(),
+        )
+
+
 def test_build_rejects_nominal_line_missing_edge_roi() -> None:
     geometry = _selection_geometry()
     geometry["nominal_edge"] = Line2D(
