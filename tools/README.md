@@ -391,3 +391,68 @@ Show the CLI help:
 ```bash
 python3 tools/analyze_edge.py --help
 ```
+
+## `summarize_edge.py`
+
+Builds the controlled Scene 04 comparison after all four
+`analyze_edge.py` runs have completed. The accepted matrix is:
+
+```text
+horizontal d100 r01
+vertical   d050 r01
+vertical   d100 r01
+vertical   d200 r01
+```
+
+Run the summarizer with the four explicit result directories:
+
+```bash
+python3 tools/summarize_edge.py \
+    results/scene04_gap030_horizon_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d050_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d200_r01/edge_discontinuity
+```
+
+The default output directory is `results/edge_summary` and contains:
+
+```text
+results/edge_summary/
+├── edge_summary.csv
+├── comparison_summary.yaml
+├── vertical_distance_metrics.png
+├── vertical_distance_profiles.png
+├── d100_orientation_metrics.png
+└── d100_orientation_profiles.png
+```
+
+`edge_summary.csv` reports recording-level temporal p05, median, and p95
+statistics. These ranges describe variation within one recording; they are
+not confidence intervals. Because only `r01` is available, the output does
+not claim repeatability.
+
+`comparison_summary.yaml` records the common setup, analysis parameters,
+comparison groups, input provenance, and profile coverage. A signed-distance
+bin with zero pixels is treated as missing coverage and is not interpolated.
+
+The command validates the exact condition matrix, common gap and analysis
+settings, frame status counts, and profile distance bins before writing.
+Existing summary artifacts are never overwritten. If one write fails, files
+created by that invocation are removed.
+
+Use a different output directory when needed:
+
+```bash
+python3 tools/summarize_edge.py \
+    results/scene04_gap030_horizon_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d050_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d200_r01/edge_discontinuity \
+    --output-dir results/edge_summary_review
+```
+
+Show the CLI help:
+
+```bash
+python3 tools/summarize_edge.py --help
+```
