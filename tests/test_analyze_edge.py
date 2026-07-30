@@ -1,10 +1,14 @@
 """Tests for Scene 04 edge-analysis orchestration."""
 
+import csv
 from dataclasses import replace
+from io import BytesIO, StringIO
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
+import yaml
 
 from src.io.dataset import DepthDataset
 from src.metrics.edge_discontinuity import (
@@ -22,9 +26,26 @@ from src.preprocessing.edge_roi import (
 from src.preprocessing.roi import RectROI
 import tools.analyze_edge as analyze_edge_module
 from tools.analyze_edge import (
+    FRAME_METRICS_FILENAME,
+    LABEL_MAP_FILENAME,
+    LABEL_OVERLAY_FILENAME,
+    PROFILE_FILENAME,
+    PROFILE_PLOT_FILENAME,
+    ROI_OVERLAY_FILENAME,
+    SUMMARY_FILENAME,
+    TEMPORAL_PLOT_FILENAME,
     analyze_edge,
+    build_aggregate_edge_profile_csv,
+    build_edge_artifacts,
+    build_frame_edge_metrics_csv,
+    build_summary,
     compute_edge_metrics,
     load_edge_input,
+    main,
+    parse_args,
+    parse_edge_experiment_name,
+    resolve_output_dir,
+    save_edge_analysis,
 )
 
 
@@ -174,6 +195,24 @@ def _fake_frame_analysis(
             if valid
             else None
         ),
+    )
+
+
+def _analyze_in_tmp(
+    tmp_path: Path,
+    *,
+    depth: np.ndarray | None = None,
+):
+    dataset_dir = tmp_path / EXPERIMENT_NAME
+    _write_dataset(
+        dataset_dir,
+        _raw_depth(3) if depth is None else depth,
+    )
+    roi_root = tmp_path / "roi"
+    _write_config(roi_root, _config())
+    return analyze_edge(
+        dataset_dir,
+        roi_root=roi_root,
     )
 
 
@@ -645,3 +684,387 @@ def test_analyze_edge_composes_loading_and_metrics(
         result.metrics.representative_analysis.result.frame_index
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "experiment_name",
+        "orientation",
+        "foreground_mm",
+        "background_mm",
+    ),
+    [
+        (
+            "scene04_gap030_horizon_white_d100_r01",
+            "horizontal",
+            1000,
+            1300,
+        ),
+        (
+            "scene04_gap030_vertical_white_d050_r01",
+            "vertical",
+            500,
+            800,
+        ),
+        (
+            "scene04_gap030_vertical_white_d100_r01",
+            "vertical",
+            1000,
+            1300,
+        ),
+        (
+            "scene04_gap030_vertical_white_d200_r01",
+            "vertical",
+            2000,
+            2300,
+        ),
+    ],
+)
+def test_parse_edge_experiment_name(
+    experiment_name: str,
+    orientation: str,
+    foreground_mm: int,
+    background_mm: int,
+) -> None:
+    metadata = parse_edge_experiment_name(experiment_name)
+
+    assert metadata.orientation == orientation
+    assert metadata.target == "white"
+    assert metadata.nominal_foreground_distance_mm == foreground_mm
+    assert metadata.nominal_gap_mm == 300
+    assert metadata.nominal_background_distance_mm == background_mm
+    assert (
+        metadata.distance_reference
+        == "camera_optical_reference_plane"
+    )
+    assert metadata.repeat_index == 1
+
+
+@pytest.mark.parametrize(
+    ("experiment_name", "message"),
+    [
+        (
+            "scene04_vertical_white_d100_r01",
+            "must match",
+        ),
+        (
+            "scene04_gap000_vertical_white_d100_r01",
+            "gap must be positive",
+        ),
+        (
+            "scene04_gap030_vertical_white_d000_r01",
+            "distance must be positive",
+        ),
+        (
+            "scene04_gap030_vertical_white_d100_r00",
+            "repeat index must be positive",
+        ),
+    ],
+)
+def test_parse_edge_experiment_name_rejects_invalid_name(
+    experiment_name: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_edge_experiment_name(experiment_name)
+
+
+def test_build_summary_records_setup_and_measured_gap(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(tmp_path)
+
+    summary = build_summary(result)
+    serialized = yaml.safe_dump(summary)
+
+    assert summary["setup"] == {
+        "orientation_token": "vertical",
+        "orientation": "vertical",
+        "target": "white",
+        "repeat_index": 1,
+        "distance_reference": (
+            "camera_optical_reference_plane"
+        ),
+        "nominal_foreground_distance_mm": 1000,
+        "nominal_gap_mm": 300,
+        "nominal_background_distance_mm": 1300,
+    }
+    reference = summary["reference_depth"]
+    assert reference["foreground_median_mm"] == pytest.approx(1000.0)
+    assert reference["background_median_mm"] == pytest.approx(1300.0)
+    assert reference["measured_gap_median_mm"] == pytest.approx(300.0)
+    assert reference["gap_error_mm"] == pytest.approx(0.0)
+    assert ".nan" not in serialized.lower()
+
+
+def test_build_frame_edge_metrics_csv_keeps_rejected_status(
+    tmp_path: Path,
+) -> None:
+    depth = _raw_depth(3)
+    depth[1] = 0
+    result = _analyze_in_tmp(tmp_path, depth=depth)
+
+    rows = list(
+        csv.DictReader(
+            StringIO(build_frame_edge_metrics_csv(result))
+        )
+    )
+
+    assert len(rows) == 3
+    assert rows[0]["timestamp_ns"] == "0"
+    assert rows[0]["measured_gap_mm"] == "300.0"
+    assert rows[1]["analysis_status"] != "ok"
+    assert rows[1]["foreground_bleeding_ratio"] == ""
+    assert rows[1]["transition_status"] == "not_analyzed"
+
+
+def test_build_aggregate_edge_profile_csv_preserves_counts(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(tmp_path)
+    profile = result.metrics.discontinuity.aggregate_profile
+
+    csv_text = build_aggregate_edge_profile_csv(profile)
+
+    assert csv_text is not None
+    rows = list(csv.DictReader(StringIO(csv_text)))
+    assert rows
+    assert set(rows[0]) == {
+        "distance_min_px",
+        "distance_max_px",
+        "distance_center_px",
+        "pixel_count",
+        "valid_count",
+        "foreground_count",
+        "background_count",
+        "mixed_count",
+        "outlier_count",
+        "invalid_count",
+        "foreground_ratio",
+        "background_ratio",
+        "mixed_ratio",
+        "outlier_ratio",
+        "invalid_ratio",
+    }
+    assert int(rows[0]["pixel_count"]) >= 0
+
+
+def test_build_edge_artifacts_builds_normal_eight_file_set(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(tmp_path)
+
+    artifacts = build_edge_artifacts(result)
+
+    assert set(artifacts) == {
+        SUMMARY_FILENAME,
+        FRAME_METRICS_FILENAME,
+        PROFILE_FILENAME,
+        LABEL_MAP_FILENAME,
+        ROI_OVERLAY_FILENAME,
+        LABEL_OVERLAY_FILENAME,
+        PROFILE_PLOT_FILENAME,
+        TEMPORAL_PLOT_FILENAME,
+    }
+    label_map = np.load(
+        BytesIO(artifacts[LABEL_MAP_FILENAME]),
+        allow_pickle=False,
+    )
+    assert label_map.shape == IMAGE_SHAPE
+    assert label_map.dtype == np.uint8
+    for filename in (
+        ROI_OVERLAY_FILENAME,
+        LABEL_OVERLAY_FILENAME,
+        PROFILE_PLOT_FILENAME,
+        TEMPORAL_PLOT_FILENAME,
+    ):
+        decoded = cv2.imdecode(
+            np.frombuffer(artifacts[filename], dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        assert decoded is not None
+
+
+def test_build_edge_artifacts_all_rejected_builds_diagnostics(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(
+        tmp_path,
+        depth=np.zeros(
+            (3, *IMAGE_SHAPE),
+            dtype=np.uint16,
+        ),
+    )
+
+    artifacts = build_edge_artifacts(result)
+    summary = yaml.safe_load(
+        artifacts[SUMMARY_FILENAME].decode("utf-8")
+    )
+
+    assert set(artifacts) == {
+        SUMMARY_FILENAME,
+        FRAME_METRICS_FILENAME,
+        ROI_OVERLAY_FILENAME,
+        TEMPORAL_PLOT_FILENAME,
+    }
+    assert summary["frames"]["valid"] == 0
+    assert summary["frames"]["rejected"] == 3
+    assert (
+        summary["diagnostics"]["aggregate_profile_available"]
+        is False
+    )
+    assert (
+        summary["diagnostics"][
+            "representative_label_map_available"
+        ]
+        is False
+    )
+
+
+def test_save_edge_analysis_writes_readable_artifacts(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(tmp_path / "input")
+    output_dir = tmp_path / "output"
+
+    saved = save_edge_analysis(output_dir, result)
+
+    assert saved == output_dir
+    assert {
+        path.name
+        for path in output_dir.iterdir()
+    } == {
+        SUMMARY_FILENAME,
+        FRAME_METRICS_FILENAME,
+        PROFILE_FILENAME,
+        LABEL_MAP_FILENAME,
+        ROI_OVERLAY_FILENAME,
+        LABEL_OVERLAY_FILENAME,
+        PROFILE_PLOT_FILENAME,
+        TEMPORAL_PLOT_FILENAME,
+    }
+    with (output_dir / SUMMARY_FILENAME).open(
+        "r",
+        encoding="utf-8",
+    ) as stream:
+        summary = yaml.safe_load(stream)
+    assert summary["dataset"]["num_frames"] == 3
+
+
+def test_save_edge_analysis_preflights_existing_artifact(
+    tmp_path: Path,
+) -> None:
+    result = _analyze_in_tmp(tmp_path / "input")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    summary_path = output_dir / SUMMARY_FILENAME
+    summary_path.write_text("sentinel", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        save_edge_analysis(output_dir, result)
+
+    assert summary_path.read_text(encoding="utf-8") == "sentinel"
+    assert list(output_dir.iterdir()) == [summary_path]
+
+
+def test_save_edge_analysis_rolls_back_created_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _analyze_in_tmp(tmp_path / "input")
+    output_dir = tmp_path / "output"
+    real_open = Path.open
+    exclusive_open_count = 0
+
+    def fail_second_exclusive_open(
+        path: Path,
+        mode: str = "r",
+        *args: object,
+        **kwargs: object,
+    ):
+        nonlocal exclusive_open_count
+        if mode == "xb" and path.parent == output_dir:
+            exclusive_open_count += 1
+            if exclusive_open_count == 2:
+                raise OSError("injected write failure")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_second_exclusive_open)
+
+    with pytest.raises(OSError, match="injected write failure"):
+        save_edge_analysis(output_dir, result)
+
+    assert output_dir.is_dir()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_parse_args_and_resolve_output_dir(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / EXPERIMENT_NAME
+    roi_root = tmp_path / "roi"
+    output_dir = tmp_path / "output"
+
+    args = parse_args(
+        [
+            str(dataset_dir),
+            "--roi-root",
+            str(roi_root),
+            "--output-dir",
+            str(output_dir),
+            "--frame-index",
+            "2",
+        ]
+    )
+
+    assert args.dataset_dir == dataset_dir
+    assert args.roi_root == roi_root
+    assert args.output_dir == output_dir
+    assert args.frame_index == 2
+    assert (
+        resolve_output_dir(EXPERIMENT_NAME, None)
+        == analyze_edge_module.DEFAULT_RESULTS_ROOT
+        / EXPERIMENT_NAME
+        / "edge_discontinuity"
+    )
+    assert (
+        resolve_output_dir(EXPERIMENT_NAME, output_dir)
+        == output_dir
+    )
+
+
+def test_parse_args_help() -> None:
+    with pytest.raises(SystemExit) as error:
+        parse_args(["--help"])
+
+    assert error.value.code == 0
+
+
+def test_main_runs_formal_cli_pipeline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dataset_dir = tmp_path / EXPERIMENT_NAME
+    _write_dataset(dataset_dir, _raw_depth(3))
+    roi_root = tmp_path / "roi"
+    _write_config(roi_root, _config())
+    output_dir = tmp_path / "output"
+
+    exit_code = main(
+        [
+            str(dataset_dir),
+            "--roi-root",
+            str(roi_root),
+            "--output-dir",
+            str(output_dir),
+            "--frame-index",
+            "1",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (output_dir / SUMMARY_FILENAME).is_file()
+    output = capsys.readouterr().out
+    assert "Edge analysis complete." in output
+    assert "nominal foreground/background/gap" in output
+    assert "representative target/selected: 1 / 1" in output

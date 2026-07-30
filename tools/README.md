@@ -273,3 +273,116 @@ Show the CLI help:
 ```bash
 python3 tools/analyze_baseline.py --help
 ```
+
+## `analyze_edge.py`
+
+Analyzes one Scene 04 depth-discontinuity dataset using an existing
+foreground reference ROI, background reference ROI, edge ROI, and nominal
+edge annotation. The command is non-interactive and never opens the ROI
+selection GUI.
+
+Current experiment names must follow:
+
+```text
+scene04_gap<cm>_<horizon|horizontal|vertical>_<target>_d<foreground-cm>_r<repeat>
+```
+
+For example:
+
+```text
+scene04_gap030_vertical_white_d100_r01
+```
+
+means:
+
+```text
+camera optical reference plane → foreground: 1000 mm
+foreground → background Z-depth gap: 300 mm
+camera optical reference plane → background: 1300 mm
+```
+
+The existing `horizon` token is retained in the experiment name and
+normalized to `horizontal` in result metadata.
+
+Before analysis, create the shared edge ROI configuration:
+
+```bash
+python3 tools/select_edge_roi.py \
+    data/scene04_gap030_vertical_white_d100_r01
+```
+
+Then run:
+
+```bash
+python3 tools/analyze_edge.py \
+    data/scene04_gap030_vertical_white_d100_r01
+```
+
+Use a specific representative target frame when needed:
+
+```bash
+python3 tools/analyze_edge.py \
+    data/scene04_gap030_vertical_white_d100_r01 \
+    --frame-index 100
+```
+
+If the target frame is rejected, the nearest valid frame is used. A tie uses
+the smaller frame index.
+
+By default, a normal analysis writes:
+
+```text
+results/<experiment>/edge_discontinuity/
+├── summary.yaml
+├── frame_edge_metrics.csv
+├── aggregate_edge_profile.csv
+├── representative_label_map.npy
+├── roi_overlay.png
+├── label_overlay.png
+├── edge_probability_profile.png
+└── temporal_edge_metrics.png
+```
+
+`frame_edge_metrics.csv` contains one timestamp-aligned row per input frame.
+Rejected frames remain in the table with explicit analysis and transition
+status values; undefined floating-point fields are blank.
+
+In `aggregate_edge_profile.csv`, foreground, background, mixed, and outlier
+ratios use valid pixels as their denominator. Invalid ratio uses all pixels
+in the signed-distance bin.
+
+When all frames are rejected, the command still writes:
+
+```text
+summary.yaml
+frame_edge_metrics.csv
+roi_overlay.png
+temporal_edge_metrics.png
+```
+
+Profile and representative-label artifacts are omitted, and their
+availability is recorded in `summary.yaml`.
+
+Options:
+
+```text
+--roi-root PATH
+    Edge ROI configuration directory. Defaults to config/roi.
+
+--output-dir PATH
+    Artifact output directory. Defaults to
+    results/<experiment>/edge_discontinuity.
+
+--frame-index INDEX
+    Preferred representative frame. Defaults to the middle frame.
+```
+
+All available artifacts are serialized before any output file is created.
+Existing artifacts are never overwritten. If a write fails, files created by
+that invocation are removed.
+
+Show the CLI help:
+
+```bash
+python3 tools/analyze_edge.py --help
+```

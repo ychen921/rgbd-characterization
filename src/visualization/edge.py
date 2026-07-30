@@ -33,6 +33,9 @@ LABEL_COLORS_RGB = {
     EdgePixelLabel.OUTLIER: (190, 0, 190),
 }
 LABEL_ALPHA = 0.62
+DISPLAY_PERCENTILE_LOW = 1.0
+DISPLAY_PERCENTILE_HIGH = 99.0
+INVALID_DISPLAY_COLOR_RGB = (255, 0, 255)
 
 _PROFILE_SERIES = (
     (
@@ -66,6 +69,64 @@ _PROFILE_SERIES = (
         "--",
     ),
 )
+
+
+def depth_to_edge_display(
+    raw_depth_frame: np.ndarray,
+) -> np.ndarray:
+    """Convert one raw uint16 depth frame to a diagnostic RGB image."""
+    if not isinstance(raw_depth_frame, np.ndarray):
+        raise TypeError(
+            "raw_depth_frame must be a numpy array"
+        )
+    if raw_depth_frame.ndim != 2:
+        raise ValueError(
+            "raw_depth_frame must have shape (H, W)"
+        )
+    if raw_depth_frame.dtype != np.uint16:
+        raise ValueError(
+            "raw_depth_frame must have dtype uint16"
+        )
+
+    max_uint16 = np.iinfo(np.uint16).max
+    valid = (
+        (raw_depth_frame > 0)
+        & (raw_depth_frame < max_uint16)
+    )
+    gray = np.zeros(
+        raw_depth_frame.shape,
+        dtype=np.uint8,
+    )
+    if np.any(valid):
+        values = raw_depth_frame[valid]
+        lower = float(
+            np.percentile(values, DISPLAY_PERCENTILE_LOW)
+        )
+        upper = float(
+            np.percentile(values, DISPLAY_PERCENTILE_HIGH)
+        )
+        if upper > lower:
+            clipped = np.clip(
+                raw_depth_frame.astype(np.float32),
+                lower,
+                upper,
+            )
+            normalized = (
+                (clipped - lower)
+                / (upper - lower)
+                * 255.0
+            )
+            gray = normalized.astype(np.uint8)
+        else:
+            gray[valid] = 127
+
+    display = np.repeat(
+        gray[:, :, np.newaxis],
+        3,
+        axis=2,
+    )
+    display[~valid] = INVALID_DISPLAY_COLOR_RGB
+    return display
 
 
 def draw_edge_roi_overlay(

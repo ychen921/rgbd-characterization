@@ -19,8 +19,10 @@ from src.preprocessing.edge_roi import (
 )
 from src.preprocessing.roi import RectROI
 from src.visualization.edge import (
+    INVALID_DISPLAY_COLOR_RGB,
     LABEL_ALPHA,
     LABEL_COLORS_RGB,
+    depth_to_edge_display,
     draw_edge_roi_overlay,
     plot_edge_label_map,
     plot_edge_probability_profile,
@@ -183,6 +185,87 @@ def _assert_png_serializable(figure: object) -> None:
     output = BytesIO()
     figure.savefig(output, format="png")
     assert output.getbuffer().nbytes > 0
+
+
+def test_depth_to_edge_display_normalizes_valid_depth() -> None:
+    depth = np.asarray(
+        [
+            [1000, 1100, 1200],
+            [1000, 1100, 1200],
+        ],
+        dtype=np.uint16,
+    )
+
+    display = depth_to_edge_display(depth)
+
+    assert display.shape == (2, 3, 3)
+    assert display.dtype == np.uint8
+    np.testing.assert_array_equal(
+        display[:, :, 0],
+        display[:, :, 1],
+    )
+    assert int(display[0, 0, 0]) < int(display[0, 2, 0])
+
+
+def test_depth_to_edge_display_marks_special_values() -> None:
+    depth = np.asarray(
+        [[0, 1000, 1200, np.iinfo(np.uint16).max]],
+        dtype=np.uint16,
+    )
+
+    display = depth_to_edge_display(depth)
+
+    np.testing.assert_array_equal(
+        display[0, 0],
+        INVALID_DISPLAY_COLOR_RGB,
+    )
+    np.testing.assert_array_equal(
+        display[0, 3],
+        INVALID_DISPLAY_COLOR_RGB,
+    )
+
+
+def test_depth_to_edge_display_handles_constant_and_all_invalid() -> None:
+    constant = np.full((2, 3), 1000, dtype=np.uint16)
+    all_invalid = np.zeros((2, 3), dtype=np.uint16)
+
+    constant_display = depth_to_edge_display(constant)
+    invalid_display = depth_to_edge_display(all_invalid)
+
+    assert np.all(constant_display == 127)
+    assert np.all(
+        invalid_display
+        == np.asarray(INVALID_DISPLAY_COLOR_RGB)
+    )
+
+
+@pytest.mark.parametrize(
+    ("depth", "error_type", "message"),
+    [
+        (
+            [[1000]],
+            TypeError,
+            "numpy array",
+        ),
+        (
+            np.zeros((1, 2, 3), dtype=np.uint16),
+            ValueError,
+            "shape",
+        ),
+        (
+            np.zeros((2, 3), dtype=np.float32),
+            ValueError,
+            "dtype uint16",
+        ),
+    ],
+)
+def test_depth_to_edge_display_rejects_invalid_input(
+    depth: object,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error_type, match=message):
+        depth_to_edge_display(depth)
 
 
 def test_draw_edge_roi_overlay_returns_rgb_copy() -> None:
