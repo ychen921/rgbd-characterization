@@ -1872,7 +1872,7 @@ nominal_edge:
 
 analysis:
   distance_bin_px: 2.0
-  max_edge_distance_px: 30.0
+  max_edge_distance_px: 20.0
 
   reference:
     minimum_tolerance_mm: 10.0
@@ -2528,7 +2528,7 @@ edge_geometry:
   nominal_edge_p2: [320.0, 330.0]
   foreground_side: left
   distance_bin_px: 2.0
-  max_edge_distance_px: 30.0
+  max_edge_distance_px: 20.0
 
 reference_depth:
   foreground_median_mm: 514.0

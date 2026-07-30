@@ -135,6 +135,11 @@ directories. Show all analysis-threshold options with:
 python3 tools/select_edge_roi.py --help
 ```
 
+The default signed-distance profile uses 2 px bins and covers 20 px on each
+side of the nominal edge. Use `--distance-bin-px` and
+`--max-edge-distance-px` to override both values consistently across all
+datasets in one comparison.
+
 ## `analyze_baseline.py`
 
 Analyzes one extracted white-board baseline dataset inside its configured ROI.

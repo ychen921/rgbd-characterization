@@ -77,6 +77,8 @@ def test_parse_args_uses_reproducible_defaults() -> None:
         options
         == select_edge_roi_tool.DEFAULT_ANALYSIS_OPTIONS
     )
+    assert options.distance_bin_px == 2.0
+    assert options.max_edge_distance_px == 20.0
 
 
 def test_parse_args_accepts_frame_and_analysis_overrides() -> None:

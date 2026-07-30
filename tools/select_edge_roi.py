@@ -21,9 +21,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.geometry.edge_geometry import compute_signed_distance_map
-from src.io.dataset import DepthDataset
-from src.preprocessing.edge_roi import (
+from src.geometry.edge_geometry import (  # noqa: E402
+    compute_signed_distance_map,
+)
+from src.io.dataset import DepthDataset  # noqa: E402
+from src.preprocessing.edge_roi import (  # noqa: E402
     EdgeBleedingConfig,
     EdgeInvalidConfig,
     EdgeReferenceConfig,
@@ -34,7 +36,11 @@ from src.preprocessing.edge_roi import (
     save_edge_roi_config,
     validate_edge_roi_config,
 )
-from src.preprocessing.roi import RectROI, derive_roi_key, get_roi_path
+from src.preprocessing.roi import (  # noqa: E402
+    RectROI,
+    derive_roi_key,
+    get_roi_path,
+)
 
 
 DEFAULT_ROI_ROOT = PROJECT_ROOT / "config" / "roi"
@@ -60,7 +66,7 @@ class EdgeAnalysisOptions:
     """Store analysis values supplied by the selection CLI."""
 
     distance_bin_px: float = 2.0
-    max_edge_distance_px: float = 30.0
+    max_edge_distance_px: float = 20.0
     minimum_tolerance_mm: float = 10.0
     mad_scale: float = 3.0
     minimum_valid_ratio: float = 0.9
