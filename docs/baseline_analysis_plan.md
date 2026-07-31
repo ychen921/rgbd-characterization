@@ -43,6 +43,8 @@ The planar and Scene 04 pipelines may share extraction, dataset loading, invalid
 
 ## 1. Current Status
 
+Status reviewed on 2026-07-31.
+
 The extraction pipeline has been completed and tested:
 
 ```text
@@ -73,53 +75,71 @@ src/metrics/temporal.py
 tools/analyze_baseline.py
 ```
 
-The remaining planar work is validation and multi-dataset reporting:
+The planar analysis implementation and A1–A9 acceptance are complete.
+`tools/select_roi.py` and `tools/analyze_baseline.py` have been manually
+validated, and their CSV, NPY, YAML, and plot artifacts have been inspected.
+Scene 01–03 experimental results are currently being organized.
 
 ```text
-- select a planar ROI for scene01_white_d050_r01
-- run and inspect the real baseline artifacts
-- validate repeat reuse when repeat datasets are available
-- analyze additional distances when datasets are available
-- implement tools/summarize_baseline.py
+- consolidate Scene 01–03 experiment metadata and results
+- document cross-scene interpretation and limitations
+- validate repeatability only where repeat datasets exist
 ```
 
-The Scene 04 core configuration, selection, geometry, and metric layers are
-also implemented and covered by synthetic tests:
+The Scene 04 configuration, selection, geometry, metric, visualization,
+single-dataset analysis, and controlled cross-dataset summary layers are
+implemented and covered by automated tests:
 
 ```text
 src/preprocessing/edge_roi.py
 tools/select_edge_roi.py
 src/geometry/edge_geometry.py
 src/metrics/edge_discontinuity.py
+src/visualization/edge.py
+tools/analyze_edge.py
+tools/summarize_edge.py
 ```
 
 `tools/select_edge_roi.py` now provides the complete interactive CLI,
 including three-ROI selection, nominal-edge annotation, foreground-side
 inference, final confirmation/reselection, clean preview generation, YAML/PNG
-persistence, repeat-key reuse, and no-overwrite protection. Its interaction
-and persistence workflow has also been manually exercised using
-`scene01_white_d050_r01`. That dataset is suitable for workflow validation but
-is not a controlled Scene 04 distance-discontinuity reference.
+persistence, repeat-key reuse, and no-overwrite protection.
 
-The remaining Scene 04 work is:
+Formal Scene 04 acquisition and B1–B5 validation are complete for:
 
 ```text
-- implement src/visualization/edge.py
-- implement tools/analyze_edge.py
-- validate classification and profiles on a formal Scene 04 dataset
-- analyze repeats when datasets are available
-- implement tools/summarize_edge.py
+scene04_gap030_horizon_white_d100_r01
+scene04_gap030_vertical_white_d050_r01
+scene04_gap030_vertical_white_d100_r01
+scene04_gap030_vertical_white_d200_r01
 ```
 
-A focused implementation audit passed all 398 directly related planar and
-Scene 04 tests. This test result confirms implementation behavior; it does not
-replace real-dataset metric validation.
+For these datasets, `gap030` means a 300 mm foreground-to-background
+Z-depth difference. `d050`, `d100`, and `d200` mean the distance from the
+camera optical reference plane to the foreground. Only `r01` exists for each
+condition; additional repeats are not currently planned.
 
-The next integration milestone remains:
+B6 (`tools/summarize_edge.py`) is implemented and tested. It validates the
+fixed four-condition matrix and generates a CSV, a provenance/coverage YAML,
+two vertical-distance plots, and two d100 orientation-comparison plots. The
+formal B6 command has not yet been run to create and accept
+`results/edge_summary/`.
 
-> Produce and inspect a real planar baseline result for
-> `scene01_white_d050_r01`, then complete the Scene 04 visualization and
-> analysis entry point without modifying the semantics of the planar metrics.
+The vertical d200 aggregate profile has zero-pixel coverage in eight outer
+signed-distance bins at `-20`, `-18`, `-16`, `-14`, `14`, `16`, `18`, and
+`20` px. B6 records these bins as missing coverage and does not interpolate
+them.
+
+The focused Scene 04 regression suite passed 249 tests. The available project
+suite passed 477 tests when the environment-dependent ROS bag reader test was
+excluded. The excluded test cannot currently import the ROS Humble Python
+3.10 `rosbag2_py._reader` extension from Python 3.13.
+
+The next Scene 04 integration milestone is:
+
+> Run B6 on the four accepted Scene 04 result directories, inspect the six
+> cross-dataset artifacts, and record the descriptive findings without
+> claiming repeatability or confidence intervals.
 
 ---
 
@@ -312,8 +332,8 @@ rgbd-characterization/
 │   └── roi/
 │       ├── scene01_white_d050.yaml
 │       ├── scene01_white_d100.yaml
-│       ├── scene04_edge_d050.yaml
-│       ├── scene04_edge_d100.yaml
+│       ├── scene04_gap030_vertical_white_d050.yaml
+│       ├── scene04_gap030_vertical_white_d100.yaml
 │       └── ...
 │
 ├── tools/
@@ -364,7 +384,7 @@ Planar baseline
 1. Complete depth data semantic inspection                  [COMPLETED]
 2. Implement src/preprocessing/roi.py                       [COMPLETED]
 3. Implement tools/select_roi.py                            [COMPLETED]
-4. Select ROI for one 50 cm distance group                  [PENDING]
+4. Select ROI for one 50 cm distance group                  [COMPLETED]
 5. Validate ROI reuse across repeats                        [DATA UNAVAILABLE]
 6. Implement src/preprocessing/depth.py                     [COMPLETED]
 7. Implement src/metrics/depth_quality.py                   [COMPLETED]
@@ -374,8 +394,8 @@ Planar baseline
 11. Implement src/metrics/planarity.py                      [COMPLETED]
 12. Implement src/metrics/temporal.py                       [COMPLETED]
 13. Implement tools/analyze_baseline.py                     [COMPLETED]
-14. Validate scene01_white_d050_r01                         [PENDING]
-15. Analyze remaining repeats and distances                 [DATA UNAVAILABLE]
+14. Validate scene01_white_d050_r01                         [COMPLETED]
+15. Organize Scene 01–03 experiment results                 [IN PROGRESS]
 16. Implement cross-distance summary                        [PENDING]
 
 Scene 04 extension
@@ -383,11 +403,12 @@ Scene 04 extension
 18. Implement tools/select_edge_roi.py                      [COMPLETED]
 19. Implement src/geometry/edge_geometry.py                 [COMPLETED]
 20. Implement src/metrics/edge_discontinuity.py             [COMPLETED]
-21. Implement src/visualization/edge.py                      [PENDING]
-22. Implement tools/analyze_edge.py                          [PENDING]
-23. Validate one Scene 04 dataset                            [DATA UNAVAILABLE]
-24. Validate repeat reuse and temporal stability             [DATA UNAVAILABLE]
-25. Implement tools/summarize_edge.py                        [PENDING]
+21. Implement src/visualization/edge.py                      [COMPLETED]
+22. Implement tools/analyze_edge.py                          [COMPLETED]
+23. Validate four controlled Scene 04 datasets               [COMPLETED]
+24. Validate repeat reuse and repeatability                  [NOT PLANNED: r01 only]
+25. Implement tools/summarize_edge.py                        [COMPLETED]
+26. Run and inspect the six B6 summary artifacts             [PENDING]
 ```
 
 ---
@@ -1755,12 +1776,12 @@ Each `scene + edge setup + distance` combination has one edge ROI YAML.
 Repeats at the same setup and distance reuse the same file:
 
 ```text
-scene04_edge_d050_r01
-scene04_edge_d050_r02
-scene04_edge_d050_r03
+scene04_gap030_vertical_white_d050_r01
+scene04_gap030_vertical_white_d050_r02
+scene04_gap030_vertical_white_d050_r03
              │
              ▼
-config/roi/scene04_edge_d050.yaml
+config/roi/scene04_gap030_vertical_white_d050.yaml
 ```
 
 Reuse is valid only when:
@@ -1836,11 +1857,11 @@ distance = 0 → nominal edge line
 Recommended format:
 
 ```yaml
-name: scene04_edge_d050
+name: scene04_gap030_vertical_white_d050
 scene_type: edge_discontinuity
 
 source:
-  experiment: scene04_edge_d050_r01
+  experiment: scene04_gap030_vertical_white_d050_r01
   frame_index: 421
 
 foreground_roi:
@@ -1950,8 +1971,8 @@ line endpoints
 Required output:
 
 ```text
-config/roi/scene04_edge_d050.yaml
-results/roi_preview/scene04_edge_d050.png
+config/roi/scene04_gap030_vertical_white_d050.yaml
+results/roi_preview/scene04_gap030_vertical_white_d050.png
 ```
 
 The selection tool must not overwrite an existing YAML by default.
@@ -2490,14 +2511,14 @@ Recommended CLI:
 
 ```bash
 python3 tools/analyze_edge.py \
-    data/scene04_edge_d050_r01
+    data/scene04_gap030_vertical_white_d050_r01
 ```
 
 ### 16.15 Scene 04 Result Structure
 
 ```text
 results/
-└── scene04_edge_d050_r01/
+└── scene04_gap030_vertical_white_d050_r01/
     └── edge_discontinuity/
         ├── summary.yaml
         ├── frame_edge_metrics.csv
@@ -2513,12 +2534,12 @@ Recommended summary fields:
 
 ```yaml
 dataset:
-  experiment: scene04_edge_d050_r01
+  experiment: scene04_gap030_vertical_white_d050_r01
   num_frames: 842
 
 roi:
-  key: scene04_edge_d050
-  config: config/roi/scene04_edge_d050.yaml
+  key: scene04_gap030_vertical_white_d050
+  config: config/roi/scene04_gap030_vertical_white_d050.yaml
   foreground_pixels: 12600
   background_pixels: 12600
   edge_pixels: 12600
@@ -2559,7 +2580,7 @@ The numeric values above are examples only.
 Use one clean dataset first:
 
 ```text
-scene04_edge_d050_r01
+scene04_gap030_vertical_white_d050_r01
 ```
 
 Validation sequence:
@@ -2574,7 +2595,7 @@ Validation sequence:
 7. Inspect signed-distance probability profile
 8. Verify bleeding direction manually
 9. Inspect frame metrics for unstable or rejected frames
-10. Run synthetic tests before processing remaining repeats
+10. Run synthetic tests before processing remaining conditions
 ```
 
 Acceptance conditions for the first milestone:
@@ -3026,33 +3047,69 @@ Scene 04 must use a separate summary:
 
 ```text
 tools/summarize_edge.py
-results/edge_summary.csv
+results/edge_summary/
+├── edge_summary.csv
+├── comparison_summary.yaml
+├── vertical_distance_metrics.png
+├── vertical_distance_profiles.png
+├── d100_orientation_metrics.png
+└── d100_orientation_profiles.png
 ```
 
-Suggested Scene 04 columns:
-
-| experiment | distance_mm | repeat | edge_roi_pixels | foreground_ref_mm | background_ref_mm | foreground_bleeding_ratio | background_bleeding_ratio | mixed_ratio | outlier_ratio | invalid_ratio | transition_width_px | nominal_edge_offset_px | valid_frames | rejected_frames |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-
-Recommended Scene 04 plots:
+Implemented `edge_summary.csv` column groups:
 
 ```text
-distance vs foreground bleeding ratio
-distance vs background bleeding ratio
-distance vs mixed ratio
-distance vs invalid ratio
-distance vs transition width
-distance vs nominal-edge offset stability
+experiment identity and source summary
+orientation, target, repeat, and nominal distances
+foreground/background/edge ROI pixel counts
+distance-bin and maximum-distance settings
+foreground/background reference p05, median, and p95
+measured-gap p05, median, p95, and median gap error
+bleeding/mixed/outlier/invalid p05, median, and p95
+transition-width p05, median, and p95
+nominal-offset p05, median, p95, and standard deviation
+valid/rejected frame counts and ratios
+transition-valid/failed frame counts and success ratio
 ```
+
+Implemented Scene 04 comparisons:
+
+```text
+vertical d050/d100/d200 metric comparison
+vertical d050/d100/d200 signed-distance profiles
+d100 horizontal/vertical metric comparison
+d100 horizontal/vertical signed-distance profiles
+```
+
+The input matrix is intentionally fixed to the four accepted `gap030`,
+`white`, `r01` results. Common setup and analysis parameters, frame counts,
+profile bins, profile count identities, and profile ratios are validated
+before output is written. Existing artifacts are never overwritten.
+
+Production command:
+
+```bash
+python3 tools/summarize_edge.py \
+    results/scene04_gap030_horizon_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d050_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d100_r01/edge_discontinuity \
+    results/scene04_gap030_vertical_white_d200_r01/edge_discontinuity
+```
+
+Because there is only one recording per condition, p05–p95 values describe
+within-recording temporal variation. They are not confidence intervals and
+must not be used as repeatability estimates. Zero-pixel signed-distance bins
+are reported as missing coverage rather than interpolated.
 
 Do not merge planar residual RMSE and edge transition width into one generic quality score. They measure different failure modes.
 
 
 ## 22. Immediate Next Tasks
 
-Status was audited against the implementation and focused test suite. A checked
-item means the implementation and synthetic/automated tests are complete. It
-does not imply that real-dataset acceptance has been completed.
+Status was audited against the implementation, focused test suite, and
+reported manual acceptance. A checked implementation item means its automated
+tests are complete; real-dataset acceptance is marked separately by explicit
+validation and inspection items.
 
 Proceed in this order:
 
@@ -3073,10 +3130,10 @@ Planar baseline integration
 
 3. [x] Implement or finish tools/analyze_baseline.py
 
-4. [ ] Validate:
+4. [x] Validate:
        scene01_white_d050_r01
 
-5. [ ] Confirm:
+5. [x] Confirm:
        - zero/max-uint16 handling
        - measured-depth output
        - temporal-noise output
@@ -3086,8 +3143,8 @@ Planar baseline integration
 6. [ ] Validate d050 ROI reuse across r01/r02/r03
        BLOCKED: repeat datasets are not currently available
 
-7. [ ] Analyze remaining Scene 01 distances
-       BLOCKED: additional distance datasets are not currently available
+7. [ ] Consolidate Scene 01–03 results
+       IN PROGRESS: experiment results are being organized
 
 8. [ ] Implement tools/summarize_baseline.py
 
@@ -3129,7 +3186,7 @@ Scene 04 extension
         - nominal transition-center offset
         - per-frame and dataset aggregation
 
-13. [ ] Implement src/visualization/edge.py
+13. [x] Implement src/visualization/edge.py
         - ROI overlay
         - label overlay
         - probability profile
@@ -3137,22 +3194,28 @@ Scene 04 extension
 
 14. [x] Add Scene 04 synthetic tests
 
-15. [ ] Implement tools/analyze_edge.py
+15. [x] Implement tools/analyze_edge.py
 
-16. [ ] Validate:
-        scene04_edge_d050_r01
-        BLOCKED: a formal Scene 04 dataset is not currently available
+16. [x] Validate the controlled Scene 04 matrix:
+        - scene04_gap030_horizon_white_d100_r01
+        - scene04_gap030_vertical_white_d050_r01
+        - scene04_gap030_vertical_white_d100_r01
+        - scene04_gap030_vertical_white_d200_r01
 
-17. [ ] Inspect classification and probability profile manually
-        BLOCKED: requires tools/analyze_edge.py and a formal Scene 04 dataset
+17. [x] Inspect classification, probability profiles, frame metrics,
+        and summary artifacts manually
 
 18. [ ] Analyze Scene 04 repeats
-        BLOCKED: Scene 04 repeat datasets are not currently available
+        NOT PLANNED: only r01 exists and no additional repeats are
+        currently planned
 
-19. [ ] Implement tools/summarize_edge.py
+19. [x] Implement tools/summarize_edge.py
 
-20. [ ] Consider dual-plane classification only after the
-        depth-domain Scene 04 baseline is validated
+20. [ ] Run tools/summarize_edge.py on the four accepted results,
+        inspect all six B6 artifacts, and record descriptive findings
+
+21. [ ] Optionally evaluate dual-plane classification after B6 acceptance;
+        it is not required for the current depth-domain baseline
 ```
 
 ---
@@ -3262,47 +3325,48 @@ crop raw ROI
 summary.yaml
 ```
 
-### Milestone B: Scene 04 First Valid Result
+### Milestone B: Scene 04 First Valid Result [COMPLETED]
 
-Completed foundation:
+Status: implementation and single-dataset validation are complete. The
+cross-dataset summarizer is implemented; its production artifacts still
+require execution and acceptance.
+
+Completed implementation:
 
 ```text
 src/preprocessing/edge_roi.py
 tools/select_edge_roi.py
 src/geometry/edge_geometry.py
 src/metrics/edge_discontinuity.py
-Scene 04 synthetic tests
-```
-
-The selection workflow has been manually exercised, including ROI/line
-annotation, confirmation, preview generation, and YAML/PNG persistence. The
-formal CLI entry point is covered by automated tests and a direct `--help`
-smoke test. The available `scene01_white_d050_r01` dataset was used only to
-validate workflow mechanics. Its foreground/background geometry is not a
-controlled Scene 04 distance setup and does not satisfy the formal metric
-acceptance milestone.
-
-Remaining implementation:
-
-```text
 src/visualization/edge.py
 tools/analyze_edge.py
 tools/summarize_edge.py
+Scene 04 synthetic tests
+```
+
+Accepted single-dataset results:
+
+```text
+scene04_gap030_horizon_white_d100_r01
+scene04_gap030_vertical_white_d050_r01
+scene04_gap030_vertical_white_d100_r01
+scene04_gap030_vertical_white_d200_r01
 ```
 
 Remaining validation:
 
 ```text
-formal Scene 04 dataset
-representative label-map inspection
-aggregate probability-profile inspection
-frame rejection and temporal stability inspection
-repeat and cross-distance analysis
+run tools/summarize_edge.py on the four accepted result directories
+inspect edge_summary.csv and comparison_summary.yaml
+inspect the four cross-dataset comparison plots
+record descriptive findings and profile-coverage limitations
 ```
 
 Target:
 
-> Select and reuse a Scene 04 multi-ROI configuration, then produce a visually validated edge-classification profile and edge-quality summary for `scene04_edge_d050_r01`.
+> Produce and accept the six B6 cross-dataset artifacts for the fixed
+> horizontal d100 and vertical d050/d100/d200 `gap030`, `white`, `r01`
+> matrix.
 
 Required pipeline:
 
@@ -3333,10 +3397,10 @@ summary.yaml + CSV + diagnostic plots
 Scene 04 batch analysis should begin only after:
 
 ```text
-synthetic tests pass
-one representative label map is manually verified
-one aggregate edge profile is manually verified
-metric denominator definitions are confirmed
+[x] synthetic tests pass
+[x] representative label maps are manually verified
+[x] aggregate edge profiles are manually verified
+[x] metric denominator definitions are confirmed
 ```
 
 ---
