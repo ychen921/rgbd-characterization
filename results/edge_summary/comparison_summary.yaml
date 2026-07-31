@@ -1,0 +1,80 @@
+inputs:
+  dataset_count: 4
+  experiments:
+  - scene04_gap030_horizon_white_d100_r01
+  - scene04_gap030_vertical_white_d050_r01
+  - scene04_gap030_vertical_white_d100_r01
+  - scene04_gap030_vertical_white_d200_r01
+  summary_paths:
+  - results/scene04_gap030_horizon_white_d100_r01/edge_discontinuity/summary.yaml
+  - results/scene04_gap030_vertical_white_d050_r01/edge_discontinuity/summary.yaml
+  - results/scene04_gap030_vertical_white_d100_r01/edge_discontinuity/summary.yaml
+  - results/scene04_gap030_vertical_white_d200_r01/edge_discontinuity/summary.yaml
+common_setup:
+  target: white
+  nominal_gap_mm: 300
+  distance_reference: camera_optical_reference_plane
+common_analysis:
+  distance_bin_px: 2.0
+  max_edge_distance_px: 20.0
+  reference:
+    minimum_tolerance_mm: 10.0
+    mad_scale: 3.0
+    minimum_valid_ratio: 0.9
+    minimum_valid_count: 100
+  bleeding_probability_threshold: 0.05
+  invalid_ratio_threshold: 0.5
+  transition_high_probability: 0.9
+  transition_low_probability: 0.1
+comparison_groups:
+  orientation_d100:
+    nominal_foreground_distance_mm: 1000
+    experiments:
+    - scene04_gap030_horizon_white_d100_r01
+    - scene04_gap030_vertical_white_d100_r01
+  vertical_distance:
+    nominal_foreground_distances_mm:
+    - 500
+    - 1000
+    - 2000
+    experiments:
+    - scene04_gap030_vertical_white_d050_r01
+    - scene04_gap030_vertical_white_d100_r01
+    - scene04_gap030_vertical_white_d200_r01
+repeat_scope:
+  repeat_count_per_condition: 1
+  repeatability_analysis_available: false
+profile_coverage:
+  zero_pixel_bins_are_missing_data: true
+  experiments:
+  - experiment: scene04_gap030_horizon_white_d100_r01
+    total_bins: 21
+    populated_bins: 21
+    zero_pixel_distance_centers_px: []
+  - experiment: scene04_gap030_vertical_white_d050_r01
+    total_bins: 21
+    populated_bins: 21
+    zero_pixel_distance_centers_px: []
+  - experiment: scene04_gap030_vertical_white_d100_r01
+    total_bins: 21
+    populated_bins: 21
+    zero_pixel_distance_centers_px: []
+  - experiment: scene04_gap030_vertical_white_d200_r01
+    total_bins: 21
+    populated_bins: 13
+    zero_pixel_distance_centers_px:
+    - -20.0
+    - -18.0
+    - -16.0
+    - -14.0
+    - 14.0
+    - 16.0
+    - 18.0
+    - 20.0
+  warnings:
+  - scene04_gap030_vertical_white_d200_r01 has zero-pixel signed-distance bins
+interpretation_limits:
+- descriptive comparison only
+- temporal ranges are not confidence intervals
+- zero-pixel profile bins are not interpolated
+- nominal offset is relative to the manual nominal-edge annotation

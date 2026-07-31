@@ -1,0 +1,77 @@
+dataset:
+  experiment: scene04_gap030_vertical_white_d200_r01
+  path: data/scene04_gap030_vertical_white_d200_r01/depth.npz
+  num_frames: 442
+  width: 848
+  height: 480
+setup:
+  orientation_token: vertical
+  orientation: vertical
+  target: white
+  repeat_index: 1
+  distance_reference: camera_optical_reference_plane
+  nominal_foreground_distance_mm: 2000
+  nominal_gap_mm: 300
+  nominal_background_distance_mm: 2300
+roi:
+  key: scene04_gap030_vertical_white_d200
+  config: config/roi/scene04_gap030_vertical_white_d200.yaml
+  source_experiment: scene04_gap030_vertical_white_d200_r01
+  source_frame_index: 221
+  foreground_pixels: 2552
+  background_pixels: 1584
+  edge_pixels: 2400
+edge_geometry:
+  nominal_edge_p1:
+  - 425.0
+  - 200.0
+  nominal_edge_p2:
+  - 424.0
+  - 312.0
+  foreground_side: left
+  distance_bin_px: 2.0
+  max_edge_distance_px: 20.0
+analysis_parameters:
+  reference:
+    minimum_tolerance_mm: 10.0
+    mad_scale: 3.0
+    minimum_valid_ratio: 0.9
+    minimum_valid_count: 100
+  bleeding_probability_threshold: 0.05
+  invalid_ratio_threshold: 0.5
+  transition_high_probability: 0.9
+  transition_low_probability: 0.1
+depth_preprocessing:
+  excluded_raw_values:
+  - 0
+  - 65535
+  depth_scale_to_mm: 1.0
+representative:
+  target_frame_index: 221
+  selected_frame_index: 221
+  available: true
+reference_depth:
+  foreground_median_mm: 1945.0
+  background_median_mm: 2276.0
+  measured_gap_median_mm: 328.0
+  nominal_gap_mm: 300
+  gap_error_mm: 28.0
+edge_quality:
+  foreground_bleeding_ratio_median: 0.0
+  background_bleeding_ratio_median: 0.016493055555555556
+  mixed_ratio_median: 0.17583333333333334
+  outlier_ratio_median: 0.0
+  invalid_ratio_median: 0.0
+transition:
+  width_median_px: 6.224134376686456
+  width_p95_px: 10.16408163265306
+  nominal_offset_median_px: -1.7614678899082568
+  nominal_offset_std_px: 0.4602981219668669
+frames:
+  valid: 442
+  rejected: 0
+  transition_valid: 322
+  transition_failed: 120
+diagnostics:
+  aggregate_profile_available: true
+  representative_label_map_available: true

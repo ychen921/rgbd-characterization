@@ -32,10 +32,10 @@ data/*
 !data/.gitkeep
 
 # Results
-results/*
-!results/.gitkeep
-!results/tf_tree/.gitkeep
-!results/scene01_white_depth_characterization_summary.md
+# results/*
+# !results/.gitkeep
+# !results/tf_tree/.gitkeep
+# !results/scene01_white_depth_characterization_summary.md
 
 # Config
 config/roi*

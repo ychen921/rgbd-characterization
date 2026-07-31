@@ -1,0 +1,77 @@
+dataset:
+  experiment: scene04_gap030_vertical_white_d050_r01
+  path: data/scene04_gap030_vertical_white_d050_r01/depth.npz
+  num_frames: 443
+  width: 848
+  height: 480
+setup:
+  orientation_token: vertical
+  orientation: vertical
+  target: white
+  repeat_index: 1
+  distance_reference: camera_optical_reference_plane
+  nominal_foreground_distance_mm: 500
+  nominal_gap_mm: 300
+  nominal_background_distance_mm: 800
+roi:
+  key: scene04_gap030_vertical_white_d050
+  config: config/roi/scene04_gap030_vertical_white_d050.yaml
+  source_experiment: scene04_gap030_vertical_white_d050_r01
+  source_frame_index: 221
+  foreground_pixels: 28400
+  background_pixels: 17974
+  edge_pixels: 20580
+edge_geometry:
+  nominal_edge_p1:
+  - 411.0
+  - 83.0
+  nominal_edge_p2:
+  - 407.0
+  - 396.0
+  foreground_side: left
+  distance_bin_px: 2.0
+  max_edge_distance_px: 20.0
+analysis_parameters:
+  reference:
+    minimum_tolerance_mm: 10.0
+    mad_scale: 3.0
+    minimum_valid_ratio: 0.9
+    minimum_valid_count: 100
+  bleeding_probability_threshold: 0.05
+  invalid_ratio_threshold: 0.5
+  transition_high_probability: 0.9
+  transition_low_probability: 0.1
+depth_preprocessing:
+  excluded_raw_values:
+  - 0
+  - 65535
+  depth_scale_to_mm: 1.0
+representative:
+  target_frame_index: 221
+  selected_frame_index: 221
+  available: true
+reference_depth:
+  foreground_median_mm: 503.0
+  background_median_mm: 811.0
+  measured_gap_median_mm: 308.0
+  nominal_gap_mm: 300
+  gap_error_mm: 8.0
+edge_quality:
+  foreground_bleeding_ratio_median: 0.026597938144329897
+  background_bleeding_ratio_median: 0.001856052794390596
+  mixed_ratio_median: 0.006170300287947347
+  outlier_ratio_median: 0.0029940119760479044
+  invalid_ratio_median: 0.010305070911131517
+transition:
+  width_median_px: 3.138435307413743
+  width_p95_px: 3.2191935589239256
+  nominal_offset_median_px: 0.638411376670873
+  nominal_offset_std_px: 0.04716075485559947
+frames:
+  valid: 443
+  rejected: 0
+  transition_valid: 443
+  transition_failed: 0
+diagnostics:
+  aggregate_profile_available: true
+  representative_label_map_available: true
