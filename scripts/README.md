@@ -9,6 +9,7 @@ The repository includes these helper scripts:
 - `run_ubuntu.sh` - Launches a Docker container for the ROS 2 Humble workspace.
 - `host_orbbec_env.sh` - Exports ROS 2 environment variables for Orbbec experiment setup.
 - `record_experiment.sh` - Creates experiment metadata and records ROS bag data for sensor characterization.
+- `record_alignment_experiment.sh` - Validates the aligned RGB-depth runtime contract and records formal `scene05` bags.
 
 ---
 
@@ -148,6 +149,56 @@ Creates an experiment directory with YAML metadata and records a ROS bag of Orbb
 - `--distance` is converted to centimeters for the experiment ID.
 - `--duration` must be a positive integer.
 - `--repeat` must be an integer.
+
+---
+
+## `record_alignment_experiment.sh`
+
+### Purpose
+
+Runs the RGB-depth alignment Phase 0 preflight and records a formal `scene05`
+experiment only when the running camera satisfies the alignment data contract.
+It does not start or reconfigure the camera.
+
+### Camera startup
+
+The Gemini 330 series launch defaults to registration disabled. Start it with:
+
+```bash
+ros2 launch orbbec_camera gemini_330_series.launch.py \
+  depth_registration:=true
+```
+
+The recorder then verifies the runtime parameter, `align_mode`, color alignment
+target, topics, encodings, CameraInfo, frame IDs, and the expected `1280x720`
+color/aligned-depth pixel grid.
+
+### Example
+
+```bash
+./scripts/record_alignment_experiment.sh \
+  --distance-mm 1000 \
+  --position center \
+  --yaw-deg 0 \
+  --repeat 1 \
+  --duration 5
+```
+
+The default camera node is `/camera/camera`, the registration parameter is
+`depth_registration`, and the registration implementation is recorded as
+`sdk`. Use the corresponding command-line options if the running wrapper uses
+different names.
+
+### Preflight policy
+
+- Missing required topics, disabled registration, unresolved alignment mode,
+  or incompatible image contracts produce `FAIL`. No formal experiment
+  directory or rosbag is created.
+- Missing optional topics produce `WARN`; recording continues without those
+  topics.
+- `PASS` and `WARN` produce `preflight.yaml`, `experiment.yaml`,
+  `camera_params.yaml`, `post_recording.yaml`, and a gracefully closed rosbag.
+- Failed reports are retained under `results/preflight/`.
 
 ---
 
