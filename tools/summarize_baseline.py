@@ -1,0 +1,967 @@
+"""Load and validate the controlled Scene 01--03 baseline matrix."""
+
+from collections.abc import Mapping, Sequence
+import csv
+from dataclasses import dataclass
+from pathlib import Path
+import re
+
+import numpy as np
+import yaml
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results"
+DEFAULT_OUTPUT_DIR = DEFAULT_RESULTS_ROOT / "baseline_summary"
+
+SUMMARY_FILENAME = "summary.yaml"
+FRAME_MEDIAN_FILENAME = "frame_median_depth.csv"
+FRAME_PLANE_FILENAME = "frame_plane_metrics.csv"
+TEMPORAL_MAP_FILENAME = "temporal_std.npy"
+ZERO_RATIO_MAP_FILENAME = "zero_ratio_map.npy"
+MAX_UINT16_MAP_FILENAME = "max_uint16_ratio_map.npy"
+
+REQUIRED_FRAME_MEDIAN_COLUMNS = frozenset(
+    {
+        "frame_index",
+        "timestamp_ns",
+        "median_depth_mm",
+    }
+)
+REQUIRED_FRAME_PLANE_COLUMNS = frozenset(
+    {
+        "frame_index",
+        "timestamp_ns",
+        "fit_succeeded",
+        "valid_points",
+        "normal_x",
+        "normal_y",
+        "normal_z",
+        "plane_distance_m",
+        "tilt_deg",
+        "residual_rmse_mm",
+        "residual_std_mm",
+        "residual_p95_abs_mm",
+        "inlier_ratio",
+    }
+)
+
+SCENE01_DISTANCES_MM = (500, 1000, 1500, 2000, 3000)
+SCENE02_YAWS_DEG = (0, 15, 30, 45, 60)
+SCENE03_TARGETS = (
+    "black",
+    "cbd",
+    "reflection",
+    "transparent",
+)
+REPEAT_INDICES = (1, 2, 3)
+
+_SCENE01_PATTERN = re.compile(
+    r"^scene01_white_d(?P<distance>\d{3})_r(?P<repeat>\d{2})$"
+)
+_SCENE02_PATTERN = re.compile(
+    r"^scene02_(?:yaw(?P<yaw>\d+)_)?white_d100_"
+    r"r(?P<repeat>\d{2})$"
+)
+_SCENE03_PATTERN = re.compile(
+    r"^scene03_(?P<target>black|cbd|reflection|transparent)_"
+    r"d100_r(?P<repeat>\d{2})$"
+)
+
+
+@dataclass(frozen=True)
+class ExperimentIdentity:
+    """Store metadata parsed from one controlled experiment name."""
+
+    experiment: str
+    scene: str
+    condition: str
+    target: str
+    nominal_distance_mm: int
+    yaw_deg: int | None
+    repeat_index: int
+
+
+@dataclass(frozen=True)
+class BaselineSummaryRecord:
+    """Store one validated baseline result and its detailed inputs."""
+
+    result_dir: Path
+    summary_path: Path
+    frame_median_path: Path
+    frame_plane_path: Path
+    temporal_map_path: Path
+    zero_ratio_map_path: Path
+    max_uint16_map_path: Path
+    identity: ExperimentIdentity
+    summary: Mapping[str, object]
+    frame_medians: tuple[Mapping[str, str], ...]
+    frame_planes: tuple[Mapping[str, str], ...]
+    temporal_map_shape: tuple[int, ...]
+    zero_ratio_map_shape: tuple[int, ...]
+    max_uint16_map_shape: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class BaselineComparison:
+    """Store the validated 42-recording matrix in deterministic order."""
+
+    records: tuple[BaselineSummaryRecord, ...]
+
+
+def _distance_token(distance_mm: int) -> str:
+    if distance_mm <= 0 or distance_mm % 10 != 0:
+        raise ValueError("distance_mm must be a positive multiple of 10")
+    return f"d{distance_mm // 10:03d}"
+
+
+def build_expected_experiments() -> tuple[str, ...]:
+    """Return the fixed Scene 01--03 experiment matrix in output order."""
+    experiments: list[str] = []
+    for distance_mm in SCENE01_DISTANCES_MM:
+        distance = _distance_token(distance_mm)
+        for repeat in REPEAT_INDICES:
+            experiments.append(
+                f"scene01_white_{distance}_r{repeat:02d}"
+            )
+    for yaw_deg in SCENE02_YAWS_DEG:
+        condition = (
+            "scene02_white_d100"
+            if yaw_deg == 0
+            else f"scene02_yaw{yaw_deg}_white_d100"
+        )
+        for repeat in REPEAT_INDICES:
+            experiments.append(f"{condition}_r{repeat:02d}")
+    for target in SCENE03_TARGETS:
+        for repeat in REPEAT_INDICES:
+            experiments.append(
+                f"scene03_{target}_d100_r{repeat:02d}"
+            )
+    return tuple(experiments)
+
+
+EXPECTED_EXPERIMENTS = build_expected_experiments()
+EXPECTED_EXPERIMENT_SET = frozenset(EXPECTED_EXPERIMENTS)
+_EXPECTED_ORDER = {
+    experiment: index
+    for index, experiment in enumerate(EXPECTED_EXPERIMENTS)
+}
+
+
+def parse_experiment_name(experiment: str) -> ExperimentIdentity:
+    """Parse one approved Scene 01--03 experiment name."""
+    if not isinstance(experiment, str) or not experiment:
+        raise ValueError("experiment name must be a non-empty string")
+    if experiment not in EXPECTED_EXPERIMENT_SET:
+        raise ValueError(
+            "Experiment is not part of the controlled baseline matrix: "
+            f"{experiment}"
+        )
+
+    match = _SCENE01_PATTERN.fullmatch(experiment)
+    if match is not None:
+        distance_mm = int(match.group("distance")) * 10
+        repeat = int(match.group("repeat"))
+        return ExperimentIdentity(
+            experiment=experiment,
+            scene="scene01",
+            condition=_condition_name(experiment),
+            target="white",
+            nominal_distance_mm=distance_mm,
+            yaw_deg=None,
+            repeat_index=repeat,
+        )
+
+    match = _SCENE02_PATTERN.fullmatch(experiment)
+    if match is not None:
+        yaw_text = match.group("yaw")
+        return ExperimentIdentity(
+            experiment=experiment,
+            scene="scene02",
+            condition=_condition_name(experiment),
+            target="white",
+            nominal_distance_mm=1000,
+            yaw_deg=0 if yaw_text is None else int(yaw_text),
+            repeat_index=int(match.group("repeat")),
+        )
+
+    match = _SCENE03_PATTERN.fullmatch(experiment)
+    if match is not None:
+        return ExperimentIdentity(
+            experiment=experiment,
+            scene="scene03",
+            condition=_condition_name(experiment),
+            target=match.group("target"),
+            nominal_distance_mm=1000,
+            yaw_deg=None,
+            repeat_index=int(match.group("repeat")),
+        )
+
+    raise ValueError(
+        f"Unsupported controlled experiment name: {experiment}"
+    )
+
+
+def discover_baseline_result_dirs(
+    results_root: Path,
+) -> tuple[Path, ...]:
+    """Discover and validate the fixed matrix beneath a results root."""
+    resolved_root = Path(results_root).expanduser()
+    if not resolved_root.is_dir():
+        raise FileNotFoundError(
+            f"Baseline results root not found: {resolved_root}"
+        )
+
+    discovered: dict[str, Path] = {}
+    for result_dir in resolved_root.glob("scene0[1-3]_*/baseline"):
+        if not result_dir.is_dir():
+            continue
+        experiment = result_dir.parent.name
+        if experiment in discovered:
+            raise ValueError(
+                f"Duplicate baseline experiment directory: {experiment}"
+            )
+        parse_experiment_name(experiment)
+        discovered[experiment] = result_dir
+
+    observed = frozenset(discovered)
+    missing = sorted(EXPECTED_EXPERIMENT_SET - observed)
+    unexpected = sorted(observed - EXPECTED_EXPERIMENT_SET)
+    if missing or unexpected:
+        details: list[str] = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected: " + ", ".join(unexpected))
+        raise ValueError(
+            "Baseline comparison requires the fixed 42-result matrix ("
+            + "; ".join(details)
+            + ")"
+        )
+
+    return tuple(
+        discovered[experiment]
+        for experiment in EXPECTED_EXPERIMENTS
+    )
+
+
+def load_baseline_summary_record(
+    result_dir: Path,
+) -> BaselineSummaryRecord:
+    """Load and validate one completed baseline-analysis directory."""
+    resolved_dir = Path(result_dir).expanduser()
+    paths = {
+        SUMMARY_FILENAME: resolved_dir / SUMMARY_FILENAME,
+        FRAME_MEDIAN_FILENAME: resolved_dir / FRAME_MEDIAN_FILENAME,
+        FRAME_PLANE_FILENAME: resolved_dir / FRAME_PLANE_FILENAME,
+        TEMPORAL_MAP_FILENAME: resolved_dir / TEMPORAL_MAP_FILENAME,
+        ZERO_RATIO_MAP_FILENAME: resolved_dir / ZERO_RATIO_MAP_FILENAME,
+        MAX_UINT16_MAP_FILENAME: resolved_dir / MAX_UINT16_MAP_FILENAME,
+    }
+    for path in paths.values():
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Required baseline summary input not found: {path}"
+            )
+
+    summary_path = paths[SUMMARY_FILENAME]
+    with summary_path.open("r", encoding="utf-8") as stream:
+        summary = _require_mapping(
+            yaml.safe_load(stream),
+            f"summary {summary_path}",
+        )
+
+    experiment = resolved_dir.parent.name
+    identity = parse_experiment_name(experiment)
+    frame_medians = _load_csv(
+        paths[FRAME_MEDIAN_FILENAME],
+        REQUIRED_FRAME_MEDIAN_COLUMNS,
+        "Frame-median",
+    )
+    frame_planes = _load_csv(
+        paths[FRAME_PLANE_FILENAME],
+        REQUIRED_FRAME_PLANE_COLUMNS,
+        "Frame-plane",
+    )
+    temporal_map = _load_map(paths[TEMPORAL_MAP_FILENAME])
+    zero_ratio_map = _load_map(paths[ZERO_RATIO_MAP_FILENAME])
+    max_uint16_map = _load_map(paths[MAX_UINT16_MAP_FILENAME])
+
+    record = BaselineSummaryRecord(
+        result_dir=resolved_dir,
+        summary_path=summary_path,
+        frame_median_path=paths[FRAME_MEDIAN_FILENAME],
+        frame_plane_path=paths[FRAME_PLANE_FILENAME],
+        temporal_map_path=paths[TEMPORAL_MAP_FILENAME],
+        zero_ratio_map_path=paths[ZERO_RATIO_MAP_FILENAME],
+        max_uint16_map_path=paths[MAX_UINT16_MAP_FILENAME],
+        identity=identity,
+        summary=summary,
+        frame_medians=frame_medians,
+        frame_planes=frame_planes,
+        temporal_map_shape=temporal_map.shape,
+        zero_ratio_map_shape=zero_ratio_map.shape,
+        max_uint16_map_shape=max_uint16_map.shape,
+    )
+    _validate_record(
+        record,
+        temporal_map=temporal_map,
+        zero_ratio_map=zero_ratio_map,
+        max_uint16_map=max_uint16_map,
+    )
+    return record
+
+
+def validate_baseline_comparison(
+    records: Sequence[BaselineSummaryRecord],
+) -> BaselineComparison:
+    """Validate and order the fixed 42-recording baseline matrix."""
+    normalized = tuple(records)
+    if len(normalized) != len(EXPECTED_EXPERIMENTS):
+        raise ValueError(
+            "Baseline comparison requires exactly 42 result records"
+        )
+    if any(
+        not isinstance(record, BaselineSummaryRecord)
+        for record in normalized
+    ):
+        raise TypeError(
+            "records must contain BaselineSummaryRecord values"
+        )
+
+    experiments = [record.identity.experiment for record in normalized]
+    if len(set(experiments)) != len(experiments):
+        raise ValueError("Baseline comparison contains duplicate experiments")
+    if frozenset(experiments) != EXPECTED_EXPERIMENT_SET:
+        raise ValueError(
+            "Baseline comparison must contain the fixed Scene 01--03 "
+            "experiment matrix"
+        )
+
+    by_condition: dict[str, list[BaselineSummaryRecord]] = {}
+    for record in normalized:
+        by_condition.setdefault(
+            record.identity.condition,
+            [],
+        ).append(record)
+    if len(by_condition) != 14:
+        raise ValueError(
+            "Baseline comparison must contain exactly 14 conditions"
+        )
+    for condition, condition_records in by_condition.items():
+        repeats = {
+            record.identity.repeat_index
+            for record in condition_records
+        }
+        if repeats != set(REPEAT_INDICES):
+            raise ValueError(
+                f"Condition must contain r01/r02/r03: {condition}"
+            )
+        roi_signatures = {
+            _roi_signature(record)
+            for record in condition_records
+        }
+        if len(roi_signatures) != 1:
+            raise ValueError(
+                f"Condition repeats use inconsistent ROI settings: "
+                f"{condition}"
+            )
+
+    common_signatures = {
+        _common_analysis_signature(record)
+        for record in normalized
+    }
+    if len(common_signatures) != 1:
+        raise ValueError(
+            "Baseline result summaries use inconsistent common settings"
+        )
+
+    ordered = tuple(
+        sorted(
+            normalized,
+            key=lambda record: _EXPECTED_ORDER[
+                record.identity.experiment
+            ],
+        )
+    )
+    return BaselineComparison(records=ordered)
+
+
+def load_and_validate_baseline_comparison(
+    results_root: Path,
+) -> BaselineComparison:
+    """Discover, load, validate, and order all controlled results."""
+    result_dirs = discover_baseline_result_dirs(results_root)
+    records = tuple(
+        load_baseline_summary_record(result_dir)
+        for result_dir in result_dirs
+    )
+    return validate_baseline_comparison(records)
+
+
+def _validate_record(
+    record: BaselineSummaryRecord,
+    *,
+    temporal_map: np.ndarray,
+    zero_ratio_map: np.ndarray,
+    max_uint16_map: np.ndarray,
+) -> None:
+    summary = record.summary
+    dataset = _nested_mapping(summary, "dataset")
+    roi = _nested_mapping(summary, "roi")
+    camera = _nested_mapping(summary, "depth_camera")
+    preprocessing = _nested_mapping(summary, "depth_preprocessing")
+    quality = _nested_mapping(summary, "depth_quality")
+    temporal = _nested_mapping(summary, "temporal_noise")
+    measured = _nested_mapping(summary, "measured_depth")
+    planarity = _nested_mapping(summary, "planarity")
+
+    experiment = _required_text(dataset, "experiment", "dataset")
+    if experiment != record.identity.experiment:
+        raise ValueError(
+            "Summary experiment does not match result directory: "
+            f"{experiment} != {record.identity.experiment}"
+        )
+    num_frames = _positive_int(dataset, "num_frames", "dataset")
+    image_width = _positive_int(dataset, "width", "dataset")
+    image_height = _positive_int(dataset, "height", "dataset")
+
+    roi_key = _required_text(roi, "key", "roi")
+    if roi_key != record.identity.condition:
+        raise ValueError(
+            f"ROI key does not match condition: {roi_key}"
+        )
+    roi_x = _non_negative_int(roi, "x", "roi")
+    roi_y = _non_negative_int(roi, "y", "roi")
+    roi_width = _positive_int(roi, "width", "roi")
+    roi_height = _positive_int(roi, "height", "roi")
+    roi_pixels = _positive_int(roi, "pixel_count", "roi")
+    if roi_width * roi_height != roi_pixels:
+        raise ValueError("ROI pixel_count does not match width x height")
+    if roi_x + roi_width > image_width or roi_y + roi_height > image_height:
+        raise ValueError("ROI exceeds dataset image bounds")
+    _validate_roi_config(record, roi)
+
+    camera_width = _positive_int(camera, "width", "depth_camera")
+    camera_height = _positive_int(camera, "height", "depth_camera")
+    if (camera_width, camera_height) != (image_width, image_height):
+        raise ValueError("Depth-camera resolution does not match dataset")
+    _required_text(camera, "config", "depth_camera")
+    _required_text(camera, "frame_id", "depth_camera")
+    for key in ("fx", "fy"):
+        if _finite_float(camera, key, "depth_camera") <= 0:
+            raise ValueError(f"depth_camera.{key} must be positive")
+    for key in ("cx", "cy"):
+        _finite_float(camera, key, "depth_camera")
+
+    excluded = preprocessing.get("excluded_raw_values")
+    if excluded != [0, 65535]:
+        raise ValueError(
+            "depth_preprocessing.excluded_raw_values must be [0, 65535]"
+        )
+    if _finite_float(
+        preprocessing,
+        "depth_scale_to_mm",
+        "depth_preprocessing",
+    ) <= 0:
+        raise ValueError("depth scale must be positive")
+
+    _optional_ratio(quality, "zero_ratio", "depth_quality")
+    max_uint16 = _nested_mapping(quality, "max_uint16")
+    _optional_ratio(max_uint16, "ratio", "depth_quality.max_uint16")
+    affected_frames = _non_negative_int(
+        max_uint16,
+        "affected_frames",
+        "depth_quality.max_uint16",
+    )
+    if affected_frames > num_frames:
+        raise ValueError("max_uint16 affected_frames exceeds num_frames")
+    max_pixels = _non_negative_int(
+        max_uint16,
+        "max_pixels_per_frame",
+        "depth_quality.max_uint16",
+    )
+    if max_pixels > roi_pixels:
+        raise ValueError("max_uint16 max_pixels_per_frame exceeds ROI")
+
+    _ratio(temporal, "min_valid_ratio", "temporal_noise")
+    for key in ("median_std_mm", "mean_std_mm", "p95_std_mm"):
+        _optional_non_negative(temporal, key, "temporal_noise")
+    for key in ("median_mm", "mean_mm", "p05_mm", "p95_mm"):
+        _optional_non_negative(measured, key, "measured_depth")
+    _optional_non_negative(measured, "std_mm", "measured_depth")
+
+    _required_text(planarity, "fitting_method", "planarity")
+    _non_negative_float(
+        planarity,
+        "inlier_threshold_mm",
+        "planarity",
+    )
+    _positive_int(planarity, "min_valid_points", "planarity")
+    successful = _non_negative_int(
+        planarity,
+        "successful_frames",
+        "planarity",
+    )
+    failed = _non_negative_int(
+        planarity,
+        "failed_frames",
+        "planarity",
+    )
+    if successful + failed != num_frames:
+        raise ValueError(
+            "Planarity successful_frames + failed_frames must equal "
+            "num_frames"
+        )
+    plane_distance = _nested_mapping(planarity, "plane_distance")
+    tilt = _nested_mapping(planarity, "tilt")
+    residual = _nested_mapping(planarity, "residual")
+    inlier = _nested_mapping(planarity, "inlier_ratio")
+    _optional_non_negative(plane_distance, "median_m", "plane_distance")
+    _optional_non_negative(plane_distance, "std_mm", "plane_distance")
+    _optional_non_negative(tilt, "median_deg", "tilt")
+    _optional_non_negative(tilt, "std_deg", "tilt")
+    for key in ("median_rmse_mm", "p95_rmse_mm", "median_p95_abs_mm"):
+        _optional_non_negative(residual, key, "residual")
+    _optional_ratio(inlier, "median", "inlier_ratio")
+
+    _validate_frame_tables(
+        record,
+        num_frames=num_frames,
+        successful_frames=successful,
+    )
+    expected_shape = (roi_height, roi_width)
+    _validate_map(
+        temporal_map,
+        expected_shape,
+        record.temporal_map_path,
+        ratio=False,
+        allow_nan=True,
+    )
+    _validate_map(
+        zero_ratio_map,
+        expected_shape,
+        record.zero_ratio_map_path,
+        ratio=True,
+        allow_nan=False,
+    )
+    _validate_map(
+        max_uint16_map,
+        expected_shape,
+        record.max_uint16_map_path,
+        ratio=True,
+        allow_nan=False,
+    )
+
+
+def _validate_roi_config(
+    record: BaselineSummaryRecord,
+    roi: Mapping[str, object],
+) -> None:
+    config_text = _required_text(roi, "config", "roi")
+    config_path = _resolve_project_path(config_text)
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"ROI configuration not found: {config_path}"
+        )
+    with config_path.open("r", encoding="utf-8") as stream:
+        config = _require_mapping(
+            yaml.safe_load(stream),
+            f"ROI configuration {config_path}",
+        )
+    if _required_text(config, "name", "ROI configuration") != (
+        record.identity.condition
+    ):
+        raise ValueError("ROI configuration name does not match condition")
+    rectangle = _nested_mapping(config, "roi")
+    if _required_text(rectangle, "type", "ROI rectangle") != "rectangle":
+        raise ValueError("ROI configuration must contain a rectangle")
+    for key in ("x", "y", "width", "height"):
+        if _required_int(rectangle, key, "ROI rectangle") != (
+            _required_int(roi, key, "roi")
+        ):
+            raise ValueError(
+                f"ROI configuration {key} does not match summary"
+            )
+
+
+def _validate_frame_tables(
+    record: BaselineSummaryRecord,
+    *,
+    num_frames: int,
+    successful_frames: int,
+) -> None:
+    if len(record.frame_medians) != num_frames:
+        raise ValueError(
+            "Frame-median CSV row count does not match num_frames"
+        )
+    if len(record.frame_planes) != num_frames:
+        raise ValueError(
+            "Frame-plane CSV row count does not match num_frames"
+        )
+
+    successful_count = 0
+    success_float_columns = (
+        "normal_x",
+        "normal_y",
+        "normal_z",
+        "plane_distance_m",
+        "tilt_deg",
+        "residual_rmse_mm",
+        "residual_std_mm",
+        "residual_p95_abs_mm",
+        "inlier_ratio",
+    )
+    for expected_index, (median_row, plane_row) in enumerate(
+        zip(record.frame_medians, record.frame_planes, strict=True)
+    ):
+        median_index = _csv_int(
+            median_row,
+            "frame_index",
+            record.frame_median_path,
+        )
+        plane_index = _csv_int(
+            plane_row,
+            "frame_index",
+            record.frame_plane_path,
+        )
+        if median_index != expected_index or plane_index != expected_index:
+            raise ValueError("Frame CSV indices must be sequential from zero")
+        median_timestamp = _csv_int(
+            median_row,
+            "timestamp_ns",
+            record.frame_median_path,
+        )
+        plane_timestamp = _csv_int(
+            plane_row,
+            "timestamp_ns",
+            record.frame_plane_path,
+        )
+        if median_timestamp != plane_timestamp:
+            raise ValueError("Frame CSV timestamps are not aligned")
+        median_depth = median_row["median_depth_mm"].strip()
+        if median_depth:
+            _csv_non_negative_float(
+                median_depth,
+                "median_depth_mm",
+                record.frame_median_path,
+            )
+
+        fit_text = plane_row["fit_succeeded"].strip().lower()
+        if fit_text not in {"true", "false"}:
+            raise ValueError(
+                "fit_succeeded must contain true or false: "
+                f"{record.frame_plane_path}"
+            )
+        _csv_non_negative_int(
+            plane_row,
+            "valid_points",
+            record.frame_plane_path,
+        )
+        if fit_text == "true":
+            successful_count += 1
+            for column in success_float_columns:
+                value = _csv_float(
+                    plane_row,
+                    column,
+                    record.frame_plane_path,
+                )
+                if column in {
+                    "plane_distance_m",
+                    "tilt_deg",
+                    "residual_rmse_mm",
+                    "residual_std_mm",
+                    "residual_p95_abs_mm",
+                } and value < 0:
+                    raise ValueError(
+                        f"{column} must be non-negative: "
+                        f"{record.frame_plane_path}"
+                    )
+                if column == "inlier_ratio" and not 0 <= value <= 1:
+                    raise ValueError(
+                        f"inlier_ratio must be in [0, 1]: "
+                        f"{record.frame_plane_path}"
+                    )
+    if successful_count != successful_frames:
+        raise ValueError(
+            "Frame-plane fit_succeeded count does not match summary"
+        )
+
+
+def _validate_map(
+    array: np.ndarray,
+    expected_shape: tuple[int, int],
+    path: Path,
+    *,
+    ratio: bool,
+    allow_nan: bool,
+) -> None:
+    if array.shape != expected_shape:
+        raise ValueError(
+            f"Map shape does not match ROI for {path}: "
+            f"{array.shape} != {expected_shape}"
+        )
+    if not np.issubdtype(array.dtype, np.number):
+        raise ValueError(f"Map must use a numeric dtype: {path}")
+    if np.any(np.isinf(array)):
+        raise ValueError(f"Map contains infinite values: {path}")
+    if not allow_nan and np.any(np.isnan(array)):
+        raise ValueError(f"Map contains NaN values: {path}")
+    finite = array[np.isfinite(array)]
+    if np.any(finite < 0):
+        raise ValueError(f"Map contains negative values: {path}")
+    if ratio and np.any(finite > 1):
+        raise ValueError(f"Ratio map contains values above one: {path}")
+
+
+def _roi_signature(record: BaselineSummaryRecord) -> tuple[object, ...]:
+    roi = _nested_mapping(record.summary, "roi")
+    return (
+        _required_text(roi, "key", "roi"),
+        _required_text(roi, "config", "roi"),
+        _required_int(roi, "x", "roi"),
+        _required_int(roi, "y", "roi"),
+        _required_int(roi, "width", "roi"),
+        _required_int(roi, "height", "roi"),
+        _required_int(roi, "pixel_count", "roi"),
+    )
+
+
+def _common_analysis_signature(
+    record: BaselineSummaryRecord,
+) -> tuple[object, ...]:
+    summary = record.summary
+    camera = _nested_mapping(summary, "depth_camera")
+    preprocessing = _nested_mapping(summary, "depth_preprocessing")
+    temporal = _nested_mapping(summary, "temporal_noise")
+    planarity = _nested_mapping(summary, "planarity")
+    excluded = preprocessing.get("excluded_raw_values")
+    if not isinstance(excluded, list):
+        raise ValueError("excluded_raw_values must be a list")
+    return (
+        _required_text(camera, "config", "depth_camera"),
+        _required_text(camera, "frame_id", "depth_camera"),
+        _required_int(camera, "width", "depth_camera"),
+        _required_int(camera, "height", "depth_camera"),
+        _finite_float(camera, "fx", "depth_camera"),
+        _finite_float(camera, "fy", "depth_camera"),
+        _finite_float(camera, "cx", "depth_camera"),
+        _finite_float(camera, "cy", "depth_camera"),
+        tuple(excluded),
+        _finite_float(
+            preprocessing,
+            "depth_scale_to_mm",
+            "depth_preprocessing",
+        ),
+        _finite_float(temporal, "min_valid_ratio", "temporal_noise"),
+        _required_text(planarity, "fitting_method", "planarity"),
+        _finite_float(
+            planarity,
+            "inlier_threshold_mm",
+            "planarity",
+        ),
+        _required_int(planarity, "min_valid_points", "planarity"),
+    )
+
+
+def _load_csv(
+    path: Path,
+    required_columns: frozenset[str],
+    label: str,
+) -> tuple[Mapping[str, str], ...]:
+    with path.open("r", encoding="utf-8", newline="") as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames is None:
+            raise ValueError(f"{label} CSV has no header: {path}")
+        missing = required_columns.difference(reader.fieldnames)
+        if missing:
+            raise ValueError(
+                f"{label} CSV is missing columns: "
+                + ", ".join(sorted(missing))
+            )
+        return tuple(dict(row) for row in reader)
+
+
+def _load_map(path: Path) -> np.ndarray:
+    try:
+        return np.load(path, allow_pickle=False)
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Unable to load metric map: {path}") from error
+
+
+def _condition_name(experiment: str) -> str:
+    return re.sub(r"_r\d{2}$", "", experiment)
+
+
+def _resolve_project_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _nested_mapping(
+    mapping: Mapping[str, object],
+    key: str,
+) -> Mapping[str, object]:
+    return _require_mapping(mapping.get(key), key)
+
+
+def _require_mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a mapping")
+    return value
+
+
+def _required_text(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label}.{key} must be a non-empty string")
+    return value
+
+
+def _required_int(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> int:
+    value = mapping.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label}.{key} must be an integer")
+    return value
+
+
+def _positive_int(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> int:
+    value = _required_int(mapping, key, label)
+    if value <= 0:
+        raise ValueError(f"{label}.{key} must be positive")
+    return value
+
+
+def _non_negative_int(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> int:
+    value = _required_int(mapping, key, label)
+    if value < 0:
+        raise ValueError(f"{label}.{key} must be non-negative")
+    return value
+
+
+def _finite_float(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> float:
+    value = mapping.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label}.{key} must be numeric")
+    result = float(value)
+    if not np.isfinite(result):
+        raise ValueError(f"{label}.{key} must be finite")
+    return result
+
+
+def _non_negative_float(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> float:
+    value = _finite_float(mapping, key, label)
+    if value < 0:
+        raise ValueError(f"{label}.{key} must be non-negative")
+    return value
+
+
+def _ratio(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> float:
+    value = _finite_float(mapping, key, label)
+    if not 0 <= value <= 1:
+        raise ValueError(f"{label}.{key} must be in [0, 1]")
+    return value
+
+
+def _optional_non_negative(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> float | None:
+    if key not in mapping:
+        raise ValueError(f"{label}.{key} is required")
+    if mapping[key] is None:
+        return None
+    return _non_negative_float(mapping, key, label)
+
+
+def _optional_ratio(
+    mapping: Mapping[str, object],
+    key: str,
+    label: str,
+) -> float | None:
+    if key not in mapping:
+        raise ValueError(f"{label}.{key} is required")
+    if mapping[key] is None:
+        return None
+    return _ratio(mapping, key, label)
+
+
+def _csv_int(
+    row: Mapping[str, str],
+    key: str,
+    path: Path,
+) -> int:
+    try:
+        return int(row[key])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"Invalid integer {key} in {path}") from error
+
+
+def _csv_non_negative_int(
+    row: Mapping[str, str],
+    key: str,
+    path: Path,
+) -> int:
+    value = _csv_int(row, key, path)
+    if value < 0:
+        raise ValueError(f"{key} must be non-negative: {path}")
+    return value
+
+
+def _csv_float(
+    row: Mapping[str, str],
+    key: str,
+    path: Path,
+) -> float:
+    try:
+        value = float(row[key])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"Invalid float {key} in {path}") from error
+    if not np.isfinite(value):
+        raise ValueError(f"Non-finite float {key} in {path}")
+    return value
+
+
+def _csv_non_negative_float(
+    value: str,
+    key: str,
+    path: Path,
+) -> float:
+    try:
+        result = float(value)
+    except ValueError as error:
+        raise ValueError(f"Invalid float {key} in {path}") from error
+    if not np.isfinite(result) or result < 0:
+        raise ValueError(f"{key} must be finite and non-negative: {path}")
+    return result
