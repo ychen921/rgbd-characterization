@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 import csv
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 import re
 
@@ -44,6 +45,110 @@ REQUIRED_FRAME_PLANE_COLUMNS = frozenset(
         "residual_p95_abs_mm",
         "inlier_ratio",
     }
+)
+
+IDENTITY_COLUMNS = (
+    "experiment",
+    "scene",
+    "condition",
+    "target",
+    "nominal_distance_mm",
+    "yaw_deg",
+    "repeat_index",
+    "source_summary",
+    "num_frames",
+)
+ROI_COLUMNS = (
+    "roi_width",
+    "roi_height",
+    "roi_pixels",
+)
+DEPTH_QUALITY_COLUMNS = (
+    "zero_ratio",
+    "max_uint16_ratio",
+    "max_uint16_affected_frames",
+    "max_uint16_max_pixels_per_frame",
+)
+TEMPORAL_MEASURED_COLUMNS = (
+    "temporal_median_std_mm",
+    "temporal_mean_std_mm",
+    "temporal_p95_std_mm",
+    "measured_median_mm",
+    "measured_mean_mm",
+    "measured_std_mm",
+    "measured_p05_mm",
+    "measured_p95_mm",
+    "measured_offset_from_nominal_mm",
+)
+PLANARITY_COLUMNS = (
+    "plane_successful_frames",
+    "plane_failed_frames",
+    "plane_success_ratio",
+    "plane_distance_median_mm",
+    "plane_distance_offset_from_nominal_mm",
+    "plane_distance_temporal_std_mm",
+    "tilt_median_deg",
+    "tilt_temporal_std_deg",
+    "tilt_error_from_nominal_deg",
+    "plane_rmse_median_mm",
+    "plane_rmse_p95_mm",
+    "plane_p95_abs_median_mm",
+    "plane_inlier_ratio_median",
+)
+RECORDING_COLUMNS = (
+    IDENTITY_COLUMNS
+    + ROI_COLUMNS
+    + DEPTH_QUALITY_COLUMNS
+    + TEMPORAL_MEASURED_COLUMNS
+    + PLANARITY_COLUMNS
+)
+
+CONDITION_IDENTITY_COLUMNS = (
+    "scene",
+    "condition",
+    "target",
+    "nominal_distance_mm",
+    "yaw_deg",
+    "repeat_count",
+    "total_frames",
+    "min_frames_per_repeat",
+    "max_frames_per_repeat",
+    "roi_width",
+    "roi_height",
+    "roi_pixels",
+)
+AGGREGATED_METRICS = (
+    "zero_ratio",
+    "max_uint16_ratio",
+    "temporal_median_std_mm",
+    "temporal_mean_std_mm",
+    "temporal_p95_std_mm",
+    "measured_median_mm",
+    "measured_mean_mm",
+    "measured_std_mm",
+    "measured_p05_mm",
+    "measured_p95_mm",
+    "measured_offset_from_nominal_mm",
+    "plane_success_ratio",
+    "plane_distance_median_mm",
+    "plane_distance_offset_from_nominal_mm",
+    "plane_distance_temporal_std_mm",
+    "tilt_median_deg",
+    "tilt_temporal_std_deg",
+    "tilt_error_from_nominal_deg",
+    "plane_rmse_median_mm",
+    "plane_rmse_p95_mm",
+    "plane_p95_abs_median_mm",
+    "plane_inlier_ratio_median",
+)
+CONDITION_COLUMNS = CONDITION_IDENTITY_COLUMNS + tuple(
+    column
+    for metric in AGGREGATED_METRICS
+    for column in (
+        f"{metric}_mean",
+        f"{metric}_repeat_std",
+        f"{metric}_valid_count",
+    )
 )
 
 SCENE01_DISTANCES_MM = (500, 1000, 1500, 2000, 3000)
@@ -107,6 +212,15 @@ class BaselineComparison:
     """Store the validated 42-recording matrix in deterministic order."""
 
     records: tuple[BaselineSummaryRecord, ...]
+
+
+@dataclass(frozen=True)
+class MetricAggregate:
+    """Store one metric's repeat-level descriptive statistics."""
+
+    mean: float | None
+    repeat_std: float | None
+    valid_count: int
 
 
 def _distance_token(distance_mm: int) -> str:
@@ -397,6 +511,367 @@ def load_and_validate_baseline_comparison(
         for result_dir in result_dirs
     )
     return validate_baseline_comparison(records)
+
+
+def build_recording_rows(
+    comparison: BaselineComparison,
+) -> tuple[Mapping[str, object], ...]:
+    """Build one deterministic summary row per validated recording."""
+    validated = _validate_comparison_result(comparison)
+    return tuple(
+        _recording_row(record)
+        for record in validated.records
+    )
+
+
+def build_baseline_summary_csv(
+    comparison: BaselineComparison,
+) -> str:
+    """Serialize the 42 per-recording rows as deterministic CSV."""
+    return _build_csv_text(
+        RECORDING_COLUMNS,
+        build_recording_rows(comparison),
+    )
+
+
+def build_condition_rows(
+    comparison: BaselineComparison,
+) -> tuple[Mapping[str, object], ...]:
+    """Aggregate r01/r02/r03 into one row per condition."""
+    validated = _validate_comparison_result(comparison)
+    recording_rows = build_recording_rows(validated)
+    grouped: dict[str, list[Mapping[str, object]]] = {}
+    for row in recording_rows:
+        condition = row["condition"]
+        if not isinstance(condition, str):
+            raise TypeError("recording condition must be a string")
+        grouped.setdefault(condition, []).append(row)
+
+    condition_rows = tuple(
+        _condition_row(rows)
+        for rows in grouped.values()
+    )
+    if len(condition_rows) != 14:
+        raise ValueError(
+            "Condition summary requires exactly 14 condition rows"
+        )
+    return condition_rows
+
+
+def build_condition_summary_csv(
+    comparison: BaselineComparison,
+) -> str:
+    """Serialize the 14 repeat-aggregated rows as deterministic CSV."""
+    return _build_csv_text(
+        CONDITION_COLUMNS,
+        build_condition_rows(comparison),
+    )
+
+
+def _recording_row(
+    record: BaselineSummaryRecord,
+) -> dict[str, object]:
+    summary = record.summary
+    identity = record.identity
+    dataset = _nested_mapping(summary, "dataset")
+    roi = _nested_mapping(summary, "roi")
+    quality = _nested_mapping(summary, "depth_quality")
+    max_uint16 = _nested_mapping(quality, "max_uint16")
+    temporal = _nested_mapping(summary, "temporal_noise")
+    measured = _nested_mapping(summary, "measured_depth")
+    planarity = _nested_mapping(summary, "planarity")
+    plane_distance = _nested_mapping(planarity, "plane_distance")
+    tilt = _nested_mapping(planarity, "tilt")
+    residual = _nested_mapping(planarity, "residual")
+    inlier = _nested_mapping(planarity, "inlier_ratio")
+
+    measured_median = _optional_non_negative(
+        measured,
+        "median_mm",
+        "measured_depth",
+    )
+    plane_distance_m = _optional_non_negative(
+        plane_distance,
+        "median_m",
+        "plane_distance",
+    )
+    plane_distance_mm = _optional_scale(
+        plane_distance_m,
+        1000.0,
+    )
+    tilt_median = _optional_non_negative(
+        tilt,
+        "median_deg",
+        "tilt",
+    )
+    successful_frames = _non_negative_int(
+        planarity,
+        "successful_frames",
+        "planarity",
+    )
+    failed_frames = _non_negative_int(
+        planarity,
+        "failed_frames",
+        "planarity",
+    )
+    num_frames = _positive_int(dataset, "num_frames", "dataset")
+
+    return {
+        "experiment": identity.experiment,
+        "scene": identity.scene,
+        "condition": identity.condition,
+        "target": identity.target,
+        "nominal_distance_mm": identity.nominal_distance_mm,
+        "yaw_deg": identity.yaw_deg,
+        "repeat_index": identity.repeat_index,
+        "source_summary": _summary_path(record.summary_path),
+        "num_frames": num_frames,
+        "roi_width": _positive_int(roi, "width", "roi"),
+        "roi_height": _positive_int(roi, "height", "roi"),
+        "roi_pixels": _positive_int(roi, "pixel_count", "roi"),
+        "zero_ratio": _optional_ratio(
+            quality,
+            "zero_ratio",
+            "depth_quality",
+        ),
+        "max_uint16_ratio": _optional_ratio(
+            max_uint16,
+            "ratio",
+            "depth_quality.max_uint16",
+        ),
+        "max_uint16_affected_frames": _non_negative_int(
+            max_uint16,
+            "affected_frames",
+            "depth_quality.max_uint16",
+        ),
+        "max_uint16_max_pixels_per_frame": _non_negative_int(
+            max_uint16,
+            "max_pixels_per_frame",
+            "depth_quality.max_uint16",
+        ),
+        "temporal_median_std_mm": _optional_non_negative(
+            temporal,
+            "median_std_mm",
+            "temporal_noise",
+        ),
+        "temporal_mean_std_mm": _optional_non_negative(
+            temporal,
+            "mean_std_mm",
+            "temporal_noise",
+        ),
+        "temporal_p95_std_mm": _optional_non_negative(
+            temporal,
+            "p95_std_mm",
+            "temporal_noise",
+        ),
+        "measured_median_mm": measured_median,
+        "measured_mean_mm": _optional_non_negative(
+            measured,
+            "mean_mm",
+            "measured_depth",
+        ),
+        "measured_std_mm": _optional_non_negative(
+            measured,
+            "std_mm",
+            "measured_depth",
+        ),
+        "measured_p05_mm": _optional_non_negative(
+            measured,
+            "p05_mm",
+            "measured_depth",
+        ),
+        "measured_p95_mm": _optional_non_negative(
+            measured,
+            "p95_mm",
+            "measured_depth",
+        ),
+        "measured_offset_from_nominal_mm": _optional_offset(
+            measured_median,
+            identity.nominal_distance_mm,
+        ),
+        "plane_successful_frames": successful_frames,
+        "plane_failed_frames": failed_frames,
+        "plane_success_ratio": successful_frames / num_frames,
+        "plane_distance_median_mm": plane_distance_mm,
+        "plane_distance_offset_from_nominal_mm": _optional_offset(
+            plane_distance_mm,
+            identity.nominal_distance_mm,
+        ),
+        "plane_distance_temporal_std_mm": _optional_non_negative(
+            plane_distance,
+            "std_mm",
+            "plane_distance",
+        ),
+        "tilt_median_deg": tilt_median,
+        "tilt_temporal_std_deg": _optional_non_negative(
+            tilt,
+            "std_deg",
+            "tilt",
+        ),
+        "tilt_error_from_nominal_deg": (
+            _optional_offset(tilt_median, identity.yaw_deg)
+            if identity.scene == "scene02"
+            else None
+        ),
+        "plane_rmse_median_mm": _optional_non_negative(
+            residual,
+            "median_rmse_mm",
+            "residual",
+        ),
+        "plane_rmse_p95_mm": _optional_non_negative(
+            residual,
+            "p95_rmse_mm",
+            "residual",
+        ),
+        "plane_p95_abs_median_mm": _optional_non_negative(
+            residual,
+            "median_p95_abs_mm",
+            "residual",
+        ),
+        "plane_inlier_ratio_median": _optional_ratio(
+            inlier,
+            "median",
+            "inlier_ratio",
+        ),
+    }
+
+
+def _condition_row(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    if len(rows) != len(REPEAT_INDICES):
+        raise ValueError("Condition aggregation requires three repeats")
+    first = rows[0]
+    condition = first["condition"]
+    identity_columns = (
+        "scene",
+        "condition",
+        "target",
+        "nominal_distance_mm",
+        "yaw_deg",
+        "roi_width",
+        "roi_height",
+        "roi_pixels",
+    )
+    for row in rows[1:]:
+        for column in identity_columns:
+            if row[column] != first[column]:
+                raise ValueError(
+                    f"Condition rows disagree on {column}: {condition}"
+                )
+    repeats = {row["repeat_index"] for row in rows}
+    if repeats != set(REPEAT_INDICES):
+        raise ValueError(
+            f"Condition aggregation requires r01/r02/r03: {condition}"
+        )
+
+    frame_counts = [_row_int(row, "num_frames") for row in rows]
+    result: dict[str, object] = {
+        "scene": first["scene"],
+        "condition": condition,
+        "target": first["target"],
+        "nominal_distance_mm": first["nominal_distance_mm"],
+        "yaw_deg": first["yaw_deg"],
+        "repeat_count": len(rows),
+        "total_frames": sum(frame_counts),
+        "min_frames_per_repeat": min(frame_counts),
+        "max_frames_per_repeat": max(frame_counts),
+        "roi_width": first["roi_width"],
+        "roi_height": first["roi_height"],
+        "roi_pixels": first["roi_pixels"],
+    }
+    for metric in AGGREGATED_METRICS:
+        aggregate = _aggregate_metric([row[metric] for row in rows])
+        result[f"{metric}_mean"] = aggregate.mean
+        result[f"{metric}_repeat_std"] = aggregate.repeat_std
+        result[f"{metric}_valid_count"] = aggregate.valid_count
+    return result
+
+
+def _aggregate_metric(values: Sequence[object]) -> MetricAggregate:
+    finite: list[float] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(
+            value,
+            (int, float, np.integer, np.floating),
+        ):
+            raise TypeError("Aggregate metric values must be numeric or None")
+        normalized = float(value)
+        if np.isfinite(normalized):
+            finite.append(normalized)
+
+    valid_count = len(finite)
+    if not finite:
+        return MetricAggregate(
+            mean=None,
+            repeat_std=None,
+            valid_count=0,
+        )
+    mean = float(np.mean(finite))
+    repeat_std = (
+        float(np.std(finite, ddof=1))
+        if valid_count >= 2
+        else None
+    )
+    return MetricAggregate(
+        mean=mean,
+        repeat_std=repeat_std,
+        valid_count=valid_count,
+    )
+
+
+def _build_csv_text(
+    columns: Sequence[str],
+    rows: Sequence[Mapping[str, object]],
+) -> str:
+    stream = StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=columns)
+    writer.writeheader()
+    writer.writerows(rows)
+    return stream.getvalue()
+
+
+def _optional_scale(
+    value: float | None,
+    scale: float,
+) -> float | None:
+    if value is None:
+        return None
+    return float(value * scale)
+
+
+def _optional_offset(
+    value: float | None,
+    nominal: int | None,
+) -> float | None:
+    if value is None or nominal is None:
+        return None
+    return float(value - nominal)
+
+
+def _row_int(row: Mapping[str, object], key: str) -> int:
+    value = row.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"Recording row {key} must be an integer")
+    return value
+
+
+def _summary_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def _validate_comparison_result(
+    comparison: BaselineComparison,
+) -> BaselineComparison:
+    if not isinstance(comparison, BaselineComparison):
+        raise TypeError("comparison must be a BaselineComparison")
+    return validate_baseline_comparison(comparison.records)
 
 
 def _validate_record(

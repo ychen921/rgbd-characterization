@@ -1,6 +1,7 @@
 """Tests for controlled Scene 01--03 baseline input validation."""
 
 import csv
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
@@ -485,3 +486,179 @@ def test_load_rejects_invalid_ratio_map_values(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="above one"):
         summarize_baseline.load_baseline_summary_record(result_dir)
+
+
+def test_build_recording_rows_derives_identity_units_and_offsets(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+
+    rows = summarize_baseline.build_recording_rows(comparison)
+
+    assert len(rows) == 42
+    first = rows[0]
+    assert tuple(first) == summarize_baseline.RECORDING_COLUMNS
+    assert first["experiment"] == "scene01_white_d050_r01"
+    assert first["scene"] == "scene01"
+    assert first["condition"] == "scene01_white_d050"
+    assert first["target"] == "white"
+    assert first["nominal_distance_mm"] == 500
+    assert first["yaw_deg"] is None
+    assert first["repeat_index"] == 1
+    assert first["roi_width"] == 3
+    assert first["roi_height"] == 2
+    assert first["roi_pixels"] == 6
+    assert first["measured_median_mm"] == 502.0
+    assert first["measured_offset_from_nominal_mm"] == 2.0
+    assert first["plane_distance_median_mm"] == 500.0
+    assert first["plane_distance_offset_from_nominal_mm"] == 0.0
+    assert first["plane_success_ratio"] == 1.0
+    assert first["tilt_error_from_nominal_deg"] is None
+
+    yaw30 = next(
+        row
+        for row in rows
+        if row["experiment"]
+        == "scene02_yaw30_white_d100_r01"
+    )
+    assert yaw30["yaw_deg"] == 30
+    assert yaw30["tilt_median_deg"] == 30.0
+    assert yaw30["tilt_error_from_nominal_deg"] == 0.0
+
+
+def test_recording_csv_is_deterministic_and_preserves_empty_values(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+
+    first_csv = summarize_baseline.build_baseline_summary_csv(
+        comparison
+    )
+    second_csv = summarize_baseline.build_baseline_summary_csv(
+        comparison
+    )
+    rows = list(csv.DictReader(StringIO(first_csv)))
+
+    assert first_csv == second_csv
+    assert len(rows) == 42
+    assert tuple(rows[0]) == summarize_baseline.RECORDING_COLUMNS
+    assert rows[0]["yaw_deg"] == ""
+    assert rows[0]["tilt_error_from_nominal_deg"] == ""
+    assert rows[-1]["experiment"] == (
+        "scene03_transparent_d100_r03"
+    )
+
+
+def test_aggregate_metric_uses_sample_std_and_tracks_coverage() -> None:
+    complete = summarize_baseline._aggregate_metric(
+        [1.0, 2.0, 3.0]
+    )
+    assert complete.mean == pytest.approx(2.0)
+    assert complete.repeat_std == pytest.approx(1.0)
+    assert complete.valid_count == 3
+
+    partial = summarize_baseline._aggregate_metric(
+        [1.0, None, 3.0]
+    )
+    assert partial.mean == pytest.approx(2.0)
+    assert partial.repeat_std == pytest.approx(np.sqrt(2.0))
+    assert partial.valid_count == 2
+
+    single = summarize_baseline._aggregate_metric(
+        [None, np.float64(4.0), np.nan]
+    )
+    assert single.mean == 4.0
+    assert single.repeat_std is None
+    assert single.valid_count == 1
+
+    empty = summarize_baseline._aggregate_metric(
+        [None, np.nan, None]
+    )
+    assert empty.mean is None
+    assert empty.repeat_std is None
+    assert empty.valid_count == 0
+
+
+def test_build_condition_rows_aggregates_repeats_in_fixed_order(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    for value, record in zip(
+        (0.1, 0.2, 0.3),
+        comparison.records[:3],
+        strict=True,
+    ):
+        record.summary["depth_quality"]["zero_ratio"] = value
+
+    rows = summarize_baseline.build_condition_rows(comparison)
+
+    assert len(rows) == 14
+    first = rows[0]
+    assert tuple(first) == summarize_baseline.CONDITION_COLUMNS
+    assert first["condition"] == "scene01_white_d050"
+    assert first["repeat_count"] == 3
+    assert first["total_frames"] == 6
+    assert first["min_frames_per_repeat"] == 2
+    assert first["max_frames_per_repeat"] == 2
+    assert first["zero_ratio_mean"] == pytest.approx(0.2)
+    assert first["zero_ratio_repeat_std"] == pytest.approx(0.1)
+    assert first["zero_ratio_valid_count"] == 3
+    assert "max_uint16_affected_frames_mean" not in first
+
+    assert [
+        row["yaw_deg"]
+        for row in rows
+        if row["scene"] == "scene02"
+    ] == [0, 15, 30, 45, 60]
+    assert [
+        row["target"]
+        for row in rows
+        if row["scene"] == "scene03"
+    ] == list(summarize_baseline.SCENE03_TARGETS)
+
+
+def test_condition_rows_preserve_undefined_metric_coverage(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    comparison.records[0].summary["measured_depth"]["median_mm"] = None
+    comparison.records[1].summary["measured_depth"]["median_mm"] = None
+
+    condition = summarize_baseline.build_condition_rows(comparison)[0]
+
+    assert condition["measured_median_mm_mean"] == 502.0
+    assert condition["measured_median_mm_repeat_std"] is None
+    assert condition["measured_median_mm_valid_count"] == 1
+    assert condition["measured_offset_from_nominal_mm_mean"] == 2.0
+    assert condition[
+        "measured_offset_from_nominal_mm_repeat_std"
+    ] is None
+
+    csv_text = summarize_baseline.build_condition_summary_csv(
+        comparison
+    )
+    rows = list(csv.DictReader(StringIO(csv_text)))
+    assert len(rows) == 14
+    assert tuple(rows[0]) == summarize_baseline.CONDITION_COLUMNS
+    assert rows[0]["measured_median_mm_repeat_std"] == ""
+    assert rows[0]["measured_median_mm_valid_count"] == "1"
