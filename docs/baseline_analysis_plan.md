@@ -43,7 +43,7 @@ The planar and Scene 04 pipelines may share extraction, dataset loading, invalid
 
 ## 1. Current Status
 
-Status reviewed on 2026-07-31.
+Status reviewed on 2026-08-03.
 
 The extraction pipeline has been completed and tested:
 
@@ -77,14 +77,23 @@ tools/analyze_baseline.py
 
 The planar analysis implementation and A1–A9 acceptance are complete.
 `tools/select_roi.py` and `tools/analyze_baseline.py` have been manually
-validated, and their CSV, NPY, YAML, and plot artifacts have been inspected.
-Scene 01–03 experimental results are currently being organized.
+validated. Scene 01–03 individual analysis is complete for 14 conditions and
+three repeats per condition, for a total of 42 baseline results:
 
 ```text
-- consolidate Scene 01–03 experiment metadata and results
-- document cross-scene interpretation and limitations
-- validate repeatability only where repeat datasets exist
+Scene 01: 5 distance conditions x 3 repeats = 15 results
+Scene 02: 5 angle conditions x 3 repeats = 15 results
+Scene 03: 4 target conditions x 3 repeats = 12 results
 ```
+
+All 14 ROI YAML files are present. Every result contains the expected YAML,
+CSV, and NPY artifacts. The ROI configuration references and dimensions,
+NPY shapes, CSV frame counts, and repeat coverage were checked successfully.
+There were no per-frame plane-fitting failures in the 42 summaries.
+
+The remaining planar integration work is to implement the controlled
+cross-condition summary, consolidate the individual results, and document
+the comparison scope and interpretation limits.
 
 The Scene 04 configuration, selection, geometry, metric, visualization,
 single-dataset analysis, and controlled cross-dataset summary layers are
@@ -122,8 +131,9 @@ condition; additional repeats are not currently planned.
 B6 (`tools/summarize_edge.py`) is implemented and tested. It validates the
 fixed four-condition matrix and generates a CSV, a provenance/coverage YAML,
 two vertical-distance plots, and two d100 orientation-comparison plots. The
-formal B6 command has not yet been run to create and accept
-`results/edge_summary/`.
+formal B6 command has been run and all six artifacts are present under
+`results/edge_summary/`. Manual plot acceptance and the descriptive findings
+still need to be recorded.
 
 The vertical d200 aggregate profile has zero-pixel coverage in eight outer
 signed-distance bins at `-20`, `-18`, `-16`, `-14`, `14`, `16`, `18`, and
@@ -137,9 +147,9 @@ excluded. The excluded test cannot currently import the ROS Humble Python
 
 The next Scene 04 integration milestone is:
 
-> Run B6 on the four accepted Scene 04 result directories, inspect the six
-> cross-dataset artifacts, and record the descriptive findings without
-> claiming repeatability or confidence intervals.
+> Inspect the six generated B6 cross-dataset artifacts and record the
+> descriptive findings without claiming repeatability or confidence
+> intervals.
 
 ---
 
@@ -385,7 +395,7 @@ Planar baseline
 2. Implement src/preprocessing/roi.py                       [COMPLETED]
 3. Implement tools/select_roi.py                            [COMPLETED]
 4. Select ROI for one 50 cm distance group                  [COMPLETED]
-5. Validate ROI reuse across repeats                        [DATA UNAVAILABLE]
+5. Validate ROI reuse across repeats                        [COMPLETED]
 6. Implement src/preprocessing/depth.py                     [COMPLETED]
 7. Implement src/metrics/depth_quality.py                   [COMPLETED]
 8. Implement src/metrics/measured_depth.py                  [COMPLETED]
@@ -395,8 +405,8 @@ Planar baseline
 12. Implement src/metrics/temporal.py                       [COMPLETED]
 13. Implement tools/analyze_baseline.py                     [COMPLETED]
 14. Validate scene01_white_d050_r01                         [COMPLETED]
-15. Organize Scene 01–03 experiment results                 [IN PROGRESS]
-16. Implement cross-distance summary                        [PENDING]
+15. Produce Scene 01–03 individual experiment results       [COMPLETED]
+16. Implement controlled Scene 01–03 summary                [PENDING]
 
 Scene 04 extension
 17. Implement src/preprocessing/edge_roi.py                 [COMPLETED]
@@ -408,7 +418,7 @@ Scene 04 extension
 23. Validate four controlled Scene 04 datasets               [COMPLETED]
 24. Validate repeat reuse and repeatability                  [NOT PLANNED: r01 only]
 25. Implement tools/summarize_edge.py                        [COMPLETED]
-26. Run and inspect the six B6 summary artifacts             [PENDING]
+26. Inspect and accept the six generated B6 artifacts        [IN PROGRESS]
 ```
 
 ---
@@ -2991,55 +3001,209 @@ This is easier to validate than selecting all ROIs first and analyzing all datas
 
 ---
 
-## 21. Cross-Distance Comparison
+## 21. Controlled Planar Summary
 
-Once every repeat has a `summary.yaml`, create:
+Implement:
 
 ```text
 tools/summarize_baseline.py
 ```
 
-Recommended output:
+The summarizer must use the fixed 14-condition, 42-result matrix already
+available under `results/`. It must not silently summarize a partial matrix.
 
 ```text
-results/baseline_summary.csv
+Scene 01 distance comparison
+  white d050/d100/d150/d200/d300, each with r01/r02/r03
+
+Scene 02 angle comparison
+  white yaw00/yaw15/yaw30/yaw45/yaw60 at d100,
+  each with r01/r02/r03
+
+Scene 03 target comparison
+  black/cbd/reflection/transparent at d100,
+  each with r01/r02/r03
 ```
 
-Suggested columns:
+### 21.1 CLI and Discovery
 
-| experiment | distance_mm | repeat | roi_width | roi_height | roi_pixels | zero_ratio | max_uint16_ratio | temporal_median_std_mm | measured_median_mm | plane_distance_m | plane_distance_std_mm | tilt_deg | plane_rmse_mm | plane_p95_abs_mm | plane_inlier_ratio |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+Recommended CLI:
 
-Then aggregate repeats by distance.
+```bash
+python3 tools/summarize_baseline.py \
+    --results-root results \
+    --output-dir results/baseline_summary
+```
 
-Possible distance-level metrics:
+Both paths may use the shown values as defaults. The tool should derive the
+42 expected result directories from the fixed matrix instead of requiring 42
+positional arguments. Other result families under `results/`, including
+Scene 04, must be ignored.
+
+Experiment names are the controlled source of scene metadata because the
+current per-dataset `summary.yaml` does not contain explicit scene, target,
+nominal-distance, yaw, or repeat fields. Parsing must accept only the approved
+Scene 01–03 forms and reject ambiguous names.
+
+### 21.2 Validation Before Aggregation
+
+For every expected result, validate:
 
 ```text
-mean measured median across repeats
-repeat-to-repeat standard deviation
-mean temporal noise
-mean zero-depth ratio
-mean max-uint16 ratio
-mean plane distance
-plane-distance repeatability
-mean plane residual RMSE
-mean plane p95 absolute residual
-mean fitted tilt
+summary.yaml exists and has the required mappings and scalar types
+dataset.experiment matches the result-directory name
+experiment name parses to the expected scene/condition/repeat
+ROI key equals the experiment name without the repeat suffix
+ROI path exists and ROI coordinates match the summary
+ROI width x height equals pixel_count
+all three repeats of one condition use the same ROI configuration
+frame_median_depth.csv has the required header and num_frames rows
+frame_plane_metrics.csv has the required header and num_frames rows
+temporal_std.npy has the ROI shape
+zero_ratio_map.npy has the ROI shape
+max_uint16_ratio_map.npy has the ROI shape
+successful_frames + failed_frames equals num_frames
+common preprocessing, camera, and fitting settings are consistent
 ```
 
-Recommended plots:
+Missing inputs, duplicate conditions, inconsistent settings, invalid numeric
+values, and partial repeat groups must fail before output is written.
+
+### 21.3 Output Artifacts
+
+Planned output directory:
 
 ```text
-distance vs measured offset from nominal
-distance vs temporal noise
-distance vs zero-depth ratio
-distance vs max-uint16 occurrence ratio
-distance vs plane residual RMSE
-distance vs plane-distance stability
-distance vs fitted tilt
+results/baseline_summary/
+├── baseline_summary.csv
+├── condition_summary.csv
+├── comparison_summary.yaml
+├── scene01_distance_depth_quality.png
+├── scene01_distance_planarity.png
+├── scene02_angle_depth_quality.png
+├── scene02_angle_planarity.png
+├── scene03_target_depth_quality.png
+└── scene03_target_planarity.png
 ```
 
-Always retain ROI dimensions and pixel count because ROI size differs by distance.
+Build all artifacts in memory, preflight every output path, never overwrite
+existing artifacts, and remove files created by a failed partial write.
+
+### 21.4 Per-Recording Table
+
+`baseline_summary.csv` contains one deterministic row per recording. Column
+groups:
+
+```text
+identity and provenance
+  experiment, scene, condition, target, nominal_distance_mm,
+  yaw_deg, repeat_index, source_summary, num_frames
+
+ROI
+  roi_width, roi_height, roi_pixels
+
+depth quality
+  zero_ratio, max_uint16_ratio, max_uint16_affected_frames,
+  max_uint16_max_pixels_per_frame
+
+temporal and measured depth
+  temporal_median_std_mm, temporal_mean_std_mm,
+  temporal_p95_std_mm, measured_median_mm, measured_mean_mm,
+  measured_std_mm, measured_p05_mm, measured_p95_mm,
+  measured_offset_from_nominal_mm
+
+planarity
+  plane_successful_frames, plane_failed_frames, plane_success_ratio,
+  plane_distance_median_mm, plane_distance_offset_from_nominal_mm,
+  plane_distance_temporal_std_mm, tilt_median_deg,
+  tilt_temporal_std_deg, plane_rmse_median_mm, plane_rmse_p95_mm,
+  plane_p95_abs_median_mm, plane_inlier_ratio_median
+```
+
+Convert plane distance from meters to millimeters in the output table. Keep
+within-recording temporal standard deviations explicitly named so they are
+not confused with repeat-to-repeat variation.
+
+### 21.5 Repeat Aggregation
+
+`condition_summary.csv` contains one row per condition. For every applicable
+numeric metric, record:
+
+```text
+<metric>_mean
+<metric>_repeat_std
+<metric>_valid_count
+```
+
+Use sample standard deviation (`ddof=1`) across the three independent
+recordings. If fewer than two finite values are available, leave repeat
+standard deviation undefined and record the reduced valid count. Do not
+interpolate or substitute undefined metrics.
+
+Always retain ROI dimensions and pixel count. ROI size may differ between
+conditions, especially across Scene 01 distances.
+
+### 21.6 Comparison Plots
+
+Use condition means with repeat standard-deviation error bars:
+
+```text
+Scene 01
+  x-axis: nominal distance
+  depth quality: measured offset, temporal noise, zero/max-uint16 ratios
+  planarity: plane-distance offset, residuals, fitted tilt, inlier ratio
+
+Scene 02
+  x-axis: nominal yaw
+  depth quality: measured offset, temporal noise, zero/max-uint16 ratios
+  planarity: fitted tilt versus nominal yaw, tilt error, residuals,
+             plane distance, inlier ratio
+
+Scene 03
+  x-axis: target category
+  depth quality: measured offset, temporal noise, zero/max-uint16 ratios
+  planarity: plane-distance offset, residuals, fitted tilt, inlier ratio
+```
+
+Error bars describe repeat-to-repeat sample standard deviation. They are not
+confidence intervals. Nominal-distance offsets are descriptive setup-relative
+differences and must not be labeled sensor bias. Do not combine depth quality,
+temporal noise, measured offset, and planarity into a generic score.
+
+### 21.7 Provenance and Coverage
+
+`comparison_summary.yaml` must record:
+
+```text
+input experiment and summary paths
+expected and observed dataset counts
+comparison-group membership and deterministic order
+common preprocessing, camera, and plane-fitting settings
+repeat count and repeatability statistic definition
+ROI dimensions by condition
+undefined-metric coverage and warnings
+interpretation limits
+```
+
+### 21.8 Required Tests
+
+Add `tests/test_summarize_baseline.py` covering:
+
+```text
+CLI defaults and explicit paths
+experiment-name parsing and rejection
+fixed-matrix discovery and deterministic ordering
+missing, duplicate, and partial-repeat rejection
+ROI reuse and common-setting validation
+CSV row-count/header and NPY-shape validation
+per-recording row calculations and unit conversion
+repeat mean/sample-standard-deviation aggregation
+undefined-metric coverage
+YAML provenance content
+valid PNG generation
+no-overwrite preflight and failed-write rollback
+complete CLI integration
+```
 
 ---
 
@@ -3140,13 +3304,21 @@ Planar baseline integration
        - per-frame planarity output
        - summary serialization
 
-6. [ ] Validate d050 ROI reuse across r01/r02/r03
-       BLOCKED: repeat datasets are not currently available
+6. [x] Validate d050 ROI reuse across r01/r02/r03
+       - all three repeat results are present
+       - all three summaries reference the same condition-level ROI
+       - result artifacts, array shapes, and frame counts are consistent
 
-7. [ ] Consolidate Scene 01–03 results
-       IN PROGRESS: experiment results are being organized
+7. [x] Produce the Scene 01–03 individual results
+       - Scene 01: 15 results
+       - Scene 02: 15 results
+       - Scene 03: 12 results
 
 8. [ ] Implement tools/summarize_baseline.py
+       - validate the controlled 14-condition, 42-result matrix
+       - produce per-recording and repeat-aggregated tables
+       - produce scene-specific comparison plots
+       - record provenance, coverage, and interpretation limits
 
 
 Scene 04 extension
@@ -3211,8 +3383,8 @@ Scene 04 extension
 
 19. [x] Implement tools/summarize_edge.py
 
-20. [ ] Run tools/summarize_edge.py on the four accepted results,
-        inspect all six B6 artifacts, and record descriptive findings
+20. [ ] Inspect the six B6 artifacts already generated under
+        results/edge_summary/ and record descriptive findings
 
 21. [ ] Optionally evaluate dual-plane classification after B6 acceptance;
         it is not required for the current depth-domain baseline
@@ -3227,9 +3399,9 @@ The baseline milestone must be completed before implementing the alignment analy
 Recommended order:
 
 ```text
-1. Validate one baseline dataset
-2. Validate all 50 cm repeats
-3. Complete multi-distance baseline summary
+1. Validate one baseline dataset                         [COMPLETED]
+2. Validate all planar repeats and individual results    [COMPLETED]
+3. Complete controlled planar baseline summary           [PENDING]
 4. Confirm aligned RGB and depth topics and camera-info semantics
 5. Implement rgb_depth_alignment_plan.md
 ```
@@ -3256,13 +3428,11 @@ for RGB–Depth alignment.
 
 The current work is divided into two sequential milestones.
 
-### Milestone A: Complete Planar Baseline Integration
+### Milestone A: Complete Planar Baseline Summary
 
-Implementation status:
+Completed per-dataset implementation:
 
 ```text
-COMPLETED
-
 src/preprocessing/roi.py
 tools/select_roi.py
 src/preprocessing/depth.py
@@ -3275,61 +3445,70 @@ src/metrics/temporal.py
 tools/analyze_baseline.py
 ```
 
-The implementation and automated integration tests are complete. Real-dataset
-acceptance is still pending because the planar ROI and baseline result
-artifacts are not currently present.
-
-Available inputs:
+The per-dataset implementation, automated integration tests, and individual
+real-dataset outputs are complete. The available and structurally validated
+result matrix contains 14 conditions with `r01`, `r02`, and `r03` for every
+condition:
 
 ```text
-data/scene01_white_d050_r01/depth.npz
-config/calib/depth_camera_info.yaml
+Scene 01: white at d050, d100, d150, d200, and d300
+Scene 02: white at yaw00, yaw15, yaw30, yaw45, and yaw60 at d100
+Scene 03: black, cbd, reflection, and transparent targets at d100
+```
+
+Available inputs for the summary milestone:
+
+```text
+14 condition-level ROI YAML files
+42 results/<experiment>/baseline/summary.yaml files
+42 frame_median_depth.csv files
+42 frame_plane_metrics.csv files
+42 sets of temporal and depth-quality NPY maps
 ```
 
 Required next outputs:
 
 ```text
-config/roi/scene01_white_d050.yaml
-results/scene01_white_d050_r01/baseline/summary.yaml
-results/scene01_white_d050_r01/baseline/frame_median_depth.csv
-results/scene01_white_d050_r01/baseline/frame_plane_metrics.csv
-results/scene01_white_d050_r01/baseline/temporal_std.npy
-results/scene01_white_d050_r01/baseline/zero_ratio_map.npy
-results/scene01_white_d050_r01/baseline/max_uint16_ratio_map.npy
+controlled per-recording summary table
+repeat-aggregated condition summary table
+provenance and coverage summary
+Scene 01 distance-comparison plots
+Scene 02 angle-comparison plots
+Scene 03 target-comparison plots
 ```
 
 Target:
 
-> Successfully produce depth-quality, temporal-noise, measured-depth, and planarity outputs for `scene01_white_d050_r01`.
+> Implement and accept `tools/summarize_baseline.py` for the fixed Scene
+> 01–03 result matrix without combining distinct metrics into a generic score.
 
 Required pipeline:
 
 ```text
-depth.npz
+fixed 14-condition experiment matrix
 ↓
-derive ROI key
+discover 42 baseline result directories
 ↓
-load distance-specific planar ROI YAML
+load and validate YAML, CSV, NPY, ROI, and common settings
 ↓
-crop raw ROI
-├── zero/max-uint16 quality metrics
-└── prepare depth
-        ↓
-    temporal noise
-    measured depth
-        ↓
-    per-frame plane fitting
-        ↓
-    planarity metrics
+parse controlled experiment metadata
 ↓
-summary.yaml
+build 42-row per-recording summary
+↓
+aggregate r01/r02/r03 by condition using sample standard deviation
+↓
+build 14-row condition summary
+↓
+generate Scene 01/02/03 comparison plots and provenance YAML
+↓
+write all artifacts without overwrite or partial output
 ```
 
-### Milestone B: Scene 04 First Valid Result [COMPLETED]
+### Milestone B: Accept Scene 04 Cross-Dataset Summary
 
-Status: implementation and single-dataset validation are complete. The
-cross-dataset summarizer is implemented; its production artifacts still
-require execution and acceptance.
+Status: implementation, single-dataset validation, and cross-dataset summary
+execution are complete. The six generated B6 artifacts still require manual
+plot acceptance and documented descriptive findings.
 
 Completed implementation:
 
@@ -3356,7 +3535,6 @@ scene04_gap030_vertical_white_d200_r01
 Remaining validation:
 
 ```text
-run tools/summarize_edge.py on the four accepted result directories
 inspect edge_summary.csv and comparison_summary.yaml
 inspect the four cross-dataset comparison plots
 record descriptive findings and profile-coverage limitations
@@ -3364,8 +3542,8 @@ record descriptive findings and profile-coverage limitations
 
 Target:
 
-> Produce and accept the six B6 cross-dataset artifacts for the fixed
-> horizontal d100 and vertical d050/d100/d200 `gap030`, `white`, `r01`
+> Inspect and accept the six generated B6 cross-dataset artifacts for the
+> fixed horizontal d100 and vertical d050/d100/d200 `gap030`, `white`, `r01`
 > matrix.
 
 Required pipeline:
