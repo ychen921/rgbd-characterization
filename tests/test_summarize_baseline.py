@@ -4,6 +4,7 @@ import csv
 from io import StringIO
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 import yaml
@@ -662,3 +663,235 @@ def test_condition_rows_preserve_undefined_metric_coverage(
     assert tuple(rows[0]) == summarize_baseline.CONDITION_COLUMNS
     assert rows[0]["measured_median_mm_repeat_std"] == ""
     assert rows[0]["measured_median_mm_valid_count"] == "1"
+
+
+def test_build_comparison_summary_records_groups_and_provenance(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+
+    summary = summarize_baseline.build_comparison_summary(comparison)
+
+    assert summary["inputs"]["expected_dataset_count"] == 42
+    assert summary["inputs"]["observed_dataset_count"] == 42
+    assert summary["inputs"]["condition_count"] == 14
+    assert summary["inputs"]["experiments"] == list(
+        summarize_baseline.EXPECTED_EXPERIMENTS
+    )
+    groups = summary["comparison_groups"]
+    assert groups["scene01_distance"]["values"] == [
+        500,
+        1000,
+        1500,
+        2000,
+        3000,
+    ]
+    assert groups["scene02_angle"]["values"] == [0, 15, 30, 45, 60]
+    assert groups["scene03_target"]["values"] == list(
+        summarize_baseline.SCENE03_TARGETS
+    )
+    assert summary["repeat_scope"] == {
+        "repeat_count_per_condition": 3,
+        "statistic": "sample_standard_deviation",
+        "ddof": 1,
+        "confidence_intervals_available": False,
+        "error_bar_definition": (
+            "repeat-to-repeat sample standard deviation"
+        ),
+    }
+    assert len(summary["roi_coverage"]["conditions"]) == 14
+    assert summary["metric_coverage"]["incomplete"] == []
+    assert summary["metric_coverage"]["warnings"] == []
+    assert summary["metric_coverage"]["not_applicable"] == [
+        {
+            "scene": "scene01",
+            "metric": "tilt_error_from_nominal_deg",
+        },
+        {
+            "scene": "scene03",
+            "metric": "tilt_error_from_nominal_deg",
+        },
+    ]
+
+
+def test_metric_coverage_reports_missing_repeats_but_not_na_metrics(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    comparison.records[0].summary["temporal_noise"][
+        "median_std_mm"
+    ] = None
+    for record in comparison.records[:3]:
+        record.summary["measured_depth"]["median_mm"] = None
+
+    summary = summarize_baseline.build_comparison_summary(comparison)
+    incomplete = summary["metric_coverage"]["incomplete"]
+
+    assert {
+        "condition": "scene01_white_d050",
+        "metric": "temporal_median_std_mm",
+        "valid_count": 2,
+    } in incomplete
+    assert {
+        "condition": "scene01_white_d050",
+        "metric": "measured_median_mm",
+        "valid_count": 0,
+    } in incomplete
+    assert {
+        "condition": "scene01_white_d050",
+        "metric": "measured_offset_from_nominal_mm",
+        "valid_count": 0,
+    } in incomplete
+    assert all(
+        not (
+            item["condition"].startswith("scene01")
+            and item["metric"] == "tilt_error_from_nominal_deg"
+        )
+        for item in incomplete
+    )
+    assert any(
+        "2/3 valid repeat values" in warning
+        for warning in summary["metric_coverage"]["warnings"]
+    )
+
+
+def test_plot_functions_build_expected_panels_and_references(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+
+    figures = (
+        summarize_baseline.plot_scene01_depth_quality(comparison),
+        summarize_baseline.plot_scene01_planarity(comparison),
+        summarize_baseline.plot_scene02_depth_quality(comparison),
+        summarize_baseline.plot_scene02_planarity(comparison),
+        summarize_baseline.plot_scene03_depth_quality(comparison),
+        summarize_baseline.plot_scene03_planarity(comparison),
+    )
+
+    assert [len(figure.axes) for figure in figures] == [4, 6, 4, 6, 4, 6]
+    scene02_planarity = figures[3]
+    labels = {
+        line.get_label()
+        for line in scene02_planarity.axes[0].lines
+    }
+    assert "Nominal yaw reference" in labels
+    zero_lines = [
+        line
+        for line in scene02_planarity.axes[1].lines
+        if line.get_label() == "Zero reference"
+    ]
+    assert len(zero_lines) == 1
+    assert np.all(np.asarray(zero_lines[0].get_ydata()) == 0.0)
+    for figure in figures:
+        figure.clear()
+
+
+def test_missing_plot_metric_is_not_replaced_with_zero(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    for record in comparison.records[:3]:
+        record.summary["measured_depth"]["median_mm"] = None
+
+    figure = summarize_baseline.plot_scene01_depth_quality(comparison)
+    mean_line = next(
+        line
+        for line in figure.axes[0].lines
+        if line.get_label() == "Condition mean"
+    )
+
+    assert 500.0 not in np.asarray(mean_line.get_xdata())
+    assert 1000.0 in np.asarray(mean_line.get_xdata())
+    figure.clear()
+
+
+def test_build_artifacts_returns_csv_yaml_and_six_valid_pngs(
+    tmp_path: Path,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    before = set(tmp_path.rglob("*"))
+
+    artifacts = summarize_baseline.build_baseline_summary_artifacts(
+        comparison
+    )
+
+    assert set(artifacts) == {
+        summarize_baseline.OUTPUT_RECORDING_CSV_FILENAME,
+        summarize_baseline.OUTPUT_CONDITION_CSV_FILENAME,
+        summarize_baseline.OUTPUT_YAML_FILENAME,
+        summarize_baseline.SCENE01_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE01_PLANARITY_FILENAME,
+        summarize_baseline.SCENE02_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE02_PLANARITY_FILENAME,
+        summarize_baseline.SCENE03_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE03_PLANARITY_FILENAME,
+    }
+    recording_rows = list(
+        csv.DictReader(
+            StringIO(
+                artifacts[
+                    summarize_baseline.OUTPUT_RECORDING_CSV_FILENAME
+                ].decode("utf-8")
+            )
+        )
+    )
+    condition_rows = list(
+        csv.DictReader(
+            StringIO(
+                artifacts[
+                    summarize_baseline.OUTPUT_CONDITION_CSV_FILENAME
+                ].decode("utf-8")
+            )
+        )
+    )
+    comparison_summary = yaml.safe_load(
+        artifacts[summarize_baseline.OUTPUT_YAML_FILENAME]
+    )
+    assert len(recording_rows) == 42
+    assert len(condition_rows) == 14
+    assert comparison_summary["inputs"]["observed_dataset_count"] == 42
+
+    png_names = (
+        summarize_baseline.SCENE01_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE01_PLANARITY_FILENAME,
+        summarize_baseline.SCENE02_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE02_PLANARITY_FILENAME,
+        summarize_baseline.SCENE03_DEPTH_QUALITY_FILENAME,
+        summarize_baseline.SCENE03_PLANARITY_FILENAME,
+    )
+    for filename in png_names:
+        payload = artifacts[filename]
+        assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+        decoded = cv2.imdecode(
+            np.frombuffer(payload, dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        assert decoded is not None
+        assert decoded.size > 0
+    assert set(tmp_path.rglob("*")) == before

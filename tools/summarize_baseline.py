@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 import csv
 from dataclasses import dataclass
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 import re
 
@@ -21,6 +21,18 @@ FRAME_PLANE_FILENAME = "frame_plane_metrics.csv"
 TEMPORAL_MAP_FILENAME = "temporal_std.npy"
 ZERO_RATIO_MAP_FILENAME = "zero_ratio_map.npy"
 MAX_UINT16_MAP_FILENAME = "max_uint16_ratio_map.npy"
+
+OUTPUT_RECORDING_CSV_FILENAME = "baseline_summary.csv"
+OUTPUT_CONDITION_CSV_FILENAME = "condition_summary.csv"
+OUTPUT_YAML_FILENAME = "comparison_summary.yaml"
+SCENE01_DEPTH_QUALITY_FILENAME = (
+    "scene01_distance_depth_quality.png"
+)
+SCENE01_PLANARITY_FILENAME = "scene01_distance_planarity.png"
+SCENE02_DEPTH_QUALITY_FILENAME = "scene02_angle_depth_quality.png"
+SCENE02_PLANARITY_FILENAME = "scene02_angle_planarity.png"
+SCENE03_DEPTH_QUALITY_FILENAME = "scene03_target_depth_quality.png"
+SCENE03_PLANARITY_FILENAME = "scene03_target_planarity.png"
 
 REQUIRED_FRAME_MEDIAN_COLUMNS = frozenset(
     {
@@ -221,6 +233,17 @@ class MetricAggregate:
     mean: float | None
     repeat_std: float | None
     valid_count: int
+
+
+@dataclass(frozen=True)
+class PlotMetric:
+    """Define one repeat-aggregated metric panel."""
+
+    metric: str
+    title: str
+    ylabel: str
+    percent: bool = False
+    zero_reference: bool = False
 
 
 def _distance_token(distance_mm: int) -> str:
@@ -568,6 +591,433 @@ def build_condition_summary_csv(
     )
 
 
+def build_comparison_summary(
+    comparison: BaselineComparison,
+) -> dict[str, object]:
+    """Build the planar comparison provenance and coverage document."""
+    validated = _validate_comparison_result(comparison)
+    condition_rows = build_condition_rows(validated)
+    first = validated.records[0]
+    camera = _nested_mapping(first.summary, "depth_camera")
+    preprocessing = _nested_mapping(
+        first.summary,
+        "depth_preprocessing",
+    )
+    temporal = _nested_mapping(first.summary, "temporal_noise")
+    planarity = _nested_mapping(first.summary, "planarity")
+    excluded = preprocessing.get("excluded_raw_values")
+    if not isinstance(excluded, list):
+        raise ValueError("excluded_raw_values must be a list")
+
+    scene01 = _rows_for_scene(condition_rows, "scene01")
+    scene02 = _rows_for_scene(condition_rows, "scene02")
+    scene03 = _rows_for_scene(condition_rows, "scene03")
+    return {
+        "inputs": {
+            "expected_dataset_count": len(EXPECTED_EXPERIMENTS),
+            "observed_dataset_count": len(validated.records),
+            "condition_count": len(condition_rows),
+            "experiments": [
+                record.identity.experiment
+                for record in validated.records
+            ],
+            "summary_paths": [
+                _summary_path(record.summary_path)
+                for record in validated.records
+            ],
+        },
+        "comparison_groups": {
+            "scene01_distance": {
+                "scene": "scene01",
+                "independent_variable": "nominal_distance_mm",
+                "values": [
+                    _condition_int(row, "nominal_distance_mm")
+                    for row in scene01
+                ],
+                "conditions": [
+                    _condition_text(row, "condition")
+                    for row in scene01
+                ],
+            },
+            "scene02_angle": {
+                "scene": "scene02",
+                "independent_variable": "yaw_deg",
+                "values": [
+                    _condition_int(row, "yaw_deg")
+                    for row in scene02
+                ],
+                "conditions": [
+                    _condition_text(row, "condition")
+                    for row in scene02
+                ],
+            },
+            "scene03_target": {
+                "scene": "scene03",
+                "independent_variable": "target",
+                "values": [
+                    _condition_text(row, "target")
+                    for row in scene03
+                ],
+                "conditions": [
+                    _condition_text(row, "condition")
+                    for row in scene03
+                ],
+            },
+        },
+        "common_analysis": {
+            "depth_camera": {
+                "config": _required_text(
+                    camera,
+                    "config",
+                    "depth_camera",
+                ),
+                "frame_id": _required_text(
+                    camera,
+                    "frame_id",
+                    "depth_camera",
+                ),
+                "width": _required_int(
+                    camera,
+                    "width",
+                    "depth_camera",
+                ),
+                "height": _required_int(
+                    camera,
+                    "height",
+                    "depth_camera",
+                ),
+                "fx": _finite_float(camera, "fx", "depth_camera"),
+                "fy": _finite_float(camera, "fy", "depth_camera"),
+                "cx": _finite_float(camera, "cx", "depth_camera"),
+                "cy": _finite_float(camera, "cy", "depth_camera"),
+            },
+            "depth_preprocessing": {
+                "excluded_raw_values": list(excluded),
+                "depth_scale_to_mm": _finite_float(
+                    preprocessing,
+                    "depth_scale_to_mm",
+                    "depth_preprocessing",
+                ),
+            },
+            "temporal_noise": {
+                "min_valid_ratio": _finite_float(
+                    temporal,
+                    "min_valid_ratio",
+                    "temporal_noise",
+                ),
+            },
+            "plane_fitting": {
+                "method": _required_text(
+                    planarity,
+                    "fitting_method",
+                    "planarity",
+                ),
+                "inlier_threshold_mm": _finite_float(
+                    planarity,
+                    "inlier_threshold_mm",
+                    "planarity",
+                ),
+                "min_valid_points": _required_int(
+                    planarity,
+                    "min_valid_points",
+                    "planarity",
+                ),
+            },
+        },
+        "repeat_scope": {
+            "repeat_count_per_condition": len(REPEAT_INDICES),
+            "statistic": "sample_standard_deviation",
+            "ddof": 1,
+            "confidence_intervals_available": False,
+            "error_bar_definition": (
+                "repeat-to-repeat sample standard deviation"
+            ),
+        },
+        "roi_coverage": {
+            "conditions": [
+                {
+                    "condition": _condition_text(row, "condition"),
+                    "width": _condition_int(row, "roi_width"),
+                    "height": _condition_int(row, "roi_height"),
+                    "pixel_count": _condition_int(row, "roi_pixels"),
+                }
+                for row in condition_rows
+            ],
+        },
+        "metric_coverage": _metric_coverage(condition_rows),
+        "interpretation_limits": [
+            (
+                "nominal offsets are setup-relative differences, "
+                "not sensor bias"
+            ),
+            (
+                "repeat error bars are sample standard deviations, "
+                "not confidence intervals"
+            ),
+            (
+                "within-recording temporal variation is distinct "
+                "from repeat variation"
+            ),
+            "ROI dimensions differ between conditions",
+            (
+                "Scene 02 tilt error depends on nominal setup-angle "
+                "accuracy"
+            ),
+            "metrics are not combined into a generic quality score",
+        ],
+    }
+
+
+def plot_scene01_depth_quality(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 01 distance-dependent depth-quality metrics."""
+    rows = _scene_rows(comparison, "scene01")
+    x = _numeric_x(rows, "nominal_distance_mm")
+    return _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=None,
+        x_label="Nominal distance (mm)",
+        title="Scene 01: distance-dependent depth quality",
+        panels=(
+            PlotMetric(
+                "measured_offset_from_nominal_mm",
+                "Measured-depth offset",
+                "Offset (mm)",
+                zero_reference=True,
+            ),
+            PlotMetric(
+                "temporal_median_std_mm",
+                "Temporal median noise",
+                "Standard deviation (mm)",
+            ),
+            PlotMetric(
+                "zero_ratio",
+                "Zero-depth ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+            PlotMetric(
+                "max_uint16_ratio",
+                "Maximum-uint16 ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+        ),
+    )
+
+
+def plot_scene01_planarity(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 01 distance-dependent planarity metrics."""
+    rows = _scene_rows(comparison, "scene01")
+    x = _numeric_x(rows, "nominal_distance_mm")
+    return _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=None,
+        x_label="Nominal distance (mm)",
+        title="Scene 01: distance-dependent planarity",
+        panels=_distance_planarity_panels(),
+    )
+
+
+def plot_scene02_depth_quality(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 02 yaw-dependent depth-quality metrics."""
+    rows = _scene_rows(comparison, "scene02")
+    x = _numeric_x(rows, "yaw_deg")
+    return _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=None,
+        x_label="Nominal yaw (deg)",
+        title="Scene 02: angle-dependent depth quality",
+        panels=(
+            PlotMetric(
+                "measured_offset_from_nominal_mm",
+                "Measured-depth offset",
+                "Offset (mm)",
+                zero_reference=True,
+            ),
+            PlotMetric(
+                "temporal_median_std_mm",
+                "Temporal median noise",
+                "Standard deviation (mm)",
+            ),
+            PlotMetric(
+                "zero_ratio",
+                "Zero-depth ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+            PlotMetric(
+                "max_uint16_ratio",
+                "Maximum-uint16 ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+        ),
+    )
+
+
+def plot_scene02_planarity(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 02 yaw-dependent planarity metrics."""
+    rows = _scene_rows(comparison, "scene02")
+    x = _numeric_x(rows, "yaw_deg")
+    figure = _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=None,
+        x_label="Nominal yaw (deg)",
+        title="Scene 02: angle-dependent planarity",
+        panels=(
+            PlotMetric(
+                "tilt_median_deg",
+                "Fitted tilt",
+                "Tilt (deg)",
+            ),
+            PlotMetric(
+                "tilt_error_from_nominal_deg",
+                "Tilt error from nominal",
+                "Error (deg)",
+                zero_reference=True,
+            ),
+            PlotMetric(
+                "plane_distance_offset_from_nominal_mm",
+                "Plane-distance offset",
+                "Offset (mm)",
+                zero_reference=True,
+            ),
+            PlotMetric(
+                "plane_rmse_median_mm",
+                "Median residual RMSE",
+                "RMSE (mm)",
+            ),
+            PlotMetric(
+                "plane_p95_abs_median_mm",
+                "Median p95 absolute residual",
+                "Residual (mm)",
+            ),
+            PlotMetric(
+                "plane_inlier_ratio_median",
+                "Median plane inlier ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+        ),
+    )
+    fitted_tilt_axis = figure.axes[0]
+    fitted_tilt_axis.plot(
+        x,
+        x,
+        color="0.35",
+        linestyle="--",
+        label="Nominal yaw reference",
+    )
+    fitted_tilt_axis.legend(loc="best")
+    return figure
+
+
+def plot_scene03_depth_quality(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 03 target-dependent depth-quality metrics."""
+    rows = _scene_rows(comparison, "scene03")
+    x = np.arange(len(rows), dtype=np.float64)
+    return _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=_target_labels(rows),
+        x_label="Target",
+        title="Scene 03: target-dependent depth quality",
+        panels=(
+            PlotMetric(
+                "measured_offset_from_nominal_mm",
+                "Measured-depth offset",
+                "Offset (mm)",
+                zero_reference=True,
+            ),
+            PlotMetric(
+                "temporal_median_std_mm",
+                "Temporal median noise",
+                "Standard deviation (mm)",
+            ),
+            PlotMetric(
+                "zero_ratio",
+                "Zero-depth ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+            PlotMetric(
+                "max_uint16_ratio",
+                "Maximum-uint16 ratio",
+                "Ratio (%)",
+                percent=True,
+            ),
+        ),
+    )
+
+
+def plot_scene03_planarity(
+    comparison: BaselineComparison,
+):
+    """Plot Scene 03 target-dependent planarity metrics."""
+    rows = _scene_rows(comparison, "scene03")
+    x = np.arange(len(rows), dtype=np.float64)
+    return _plot_condition_panels(
+        rows,
+        x=x,
+        x_labels=_target_labels(rows),
+        x_label="Target",
+        title="Scene 03: target-dependent planarity",
+        panels=_distance_planarity_panels(),
+    )
+
+
+def build_baseline_summary_artifacts(
+    comparison: BaselineComparison,
+) -> dict[str, bytes]:
+    """Build both CSVs, provenance YAML, and six plots in memory."""
+    validated = _validate_comparison_result(comparison)
+    return {
+        OUTPUT_RECORDING_CSV_FILENAME: build_baseline_summary_csv(
+            validated
+        ).encode("utf-8"),
+        OUTPUT_CONDITION_CSV_FILENAME: build_condition_summary_csv(
+            validated
+        ).encode("utf-8"),
+        OUTPUT_YAML_FILENAME: yaml.safe_dump(
+            build_comparison_summary(validated),
+            sort_keys=False,
+            allow_unicode=True,
+        ).encode("utf-8"),
+        SCENE01_DEPTH_QUALITY_FILENAME: _figure_png_bytes(
+            plot_scene01_depth_quality(validated)
+        ),
+        SCENE01_PLANARITY_FILENAME: _figure_png_bytes(
+            plot_scene01_planarity(validated)
+        ),
+        SCENE02_DEPTH_QUALITY_FILENAME: _figure_png_bytes(
+            plot_scene02_depth_quality(validated)
+        ),
+        SCENE02_PLANARITY_FILENAME: _figure_png_bytes(
+            plot_scene02_planarity(validated)
+        ),
+        SCENE03_DEPTH_QUALITY_FILENAME: _figure_png_bytes(
+            plot_scene03_depth_quality(validated)
+        ),
+        SCENE03_PLANARITY_FILENAME: _figure_png_bytes(
+            plot_scene03_planarity(validated)
+        ),
+    }
+
+
 def _recording_row(
     record: BaselineSummaryRecord,
 ) -> dict[str, object]:
@@ -820,6 +1270,308 @@ def _aggregate_metric(values: Sequence[object]) -> MetricAggregate:
         repeat_std=repeat_std,
         valid_count=valid_count,
     )
+
+
+def _metric_coverage(
+    condition_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    incomplete: list[dict[str, object]] = []
+    applicable_count = 0
+    for row in condition_rows:
+        scene = _condition_text(row, "scene")
+        condition = _condition_text(row, "condition")
+        for metric in AGGREGATED_METRICS:
+            if (
+                metric == "tilt_error_from_nominal_deg"
+                and scene != "scene02"
+            ):
+                continue
+            applicable_count += 1
+            valid_count = _condition_int(
+                row,
+                f"{metric}_valid_count",
+            )
+            if valid_count < len(REPEAT_INDICES):
+                incomplete.append(
+                    {
+                        "condition": condition,
+                        "metric": metric,
+                        "valid_count": valid_count,
+                    }
+                )
+    return {
+        "expected_valid_count_per_condition": len(REPEAT_INDICES),
+        "applicable_metric_condition_pairs": applicable_count,
+        "complete_metric_condition_pairs": (
+            applicable_count - len(incomplete)
+        ),
+        "incomplete": incomplete,
+        "not_applicable": [
+            {
+                "scene": "scene01",
+                "metric": "tilt_error_from_nominal_deg",
+            },
+            {
+                "scene": "scene03",
+                "metric": "tilt_error_from_nominal_deg",
+            },
+        ],
+        "warnings": [
+            (
+                f"{item['condition']} has "
+                f"{item['valid_count']}/3 valid repeat values for "
+                f"{item['metric']}"
+            )
+            for item in incomplete
+        ],
+    }
+
+
+def _distance_planarity_panels() -> tuple[PlotMetric, ...]:
+    return (
+        PlotMetric(
+            "plane_distance_offset_from_nominal_mm",
+            "Plane-distance offset",
+            "Offset (mm)",
+            zero_reference=True,
+        ),
+        PlotMetric(
+            "plane_distance_temporal_std_mm",
+            "Plane-distance temporal variation",
+            "Standard deviation (mm)",
+        ),
+        PlotMetric(
+            "plane_rmse_median_mm",
+            "Median residual RMSE",
+            "RMSE (mm)",
+        ),
+        PlotMetric(
+            "plane_p95_abs_median_mm",
+            "Median p95 absolute residual",
+            "Residual (mm)",
+        ),
+        PlotMetric(
+            "tilt_median_deg",
+            "Fitted tilt",
+            "Tilt (deg)",
+        ),
+        PlotMetric(
+            "plane_inlier_ratio_median",
+            "Median plane inlier ratio",
+            "Ratio (%)",
+            percent=True,
+        ),
+    )
+
+
+def _scene_rows(
+    comparison: BaselineComparison,
+    scene: str,
+) -> tuple[Mapping[str, object], ...]:
+    rows = _rows_for_scene(build_condition_rows(comparison), scene)
+    expected_count = 4 if scene == "scene03" else 5
+    if len(rows) != expected_count:
+        raise ValueError(
+            f"{scene} comparison requires {expected_count} conditions"
+        )
+    return rows
+
+
+def _rows_for_scene(
+    rows: Sequence[Mapping[str, object]],
+    scene: str,
+) -> tuple[Mapping[str, object], ...]:
+    return tuple(
+        row
+        for row in rows
+        if _condition_text(row, "scene") == scene
+    )
+
+
+def _numeric_x(
+    rows: Sequence[Mapping[str, object]],
+    key: str,
+) -> np.ndarray:
+    return np.asarray(
+        [_condition_int(row, key) for row in rows],
+        dtype=np.float64,
+    )
+
+
+def _target_labels(
+    rows: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    return tuple(
+        (
+            "CBD"
+            if _condition_text(row, "target") == "cbd"
+            else _condition_text(row, "target").title()
+        )
+        for row in rows
+    )
+
+
+def _plot_condition_panels(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    x: np.ndarray,
+    x_labels: Sequence[str] | None,
+    x_label: str,
+    title: str,
+    panels: Sequence[PlotMetric],
+):
+    from matplotlib.figure import Figure
+
+    if len(panels) not in {4, 6}:
+        raise ValueError("Comparison figures require four or six panels")
+    if x.shape != (len(rows),):
+        raise ValueError("Plot x values must align with condition rows")
+
+    figure = Figure(
+        figsize=(12.0, 8.0 if len(panels) == 4 else 12.0),
+        constrained_layout=True,
+    )
+    axes = figure.subplots(2, 2) if len(panels) == 4 else (
+        figure.subplots(3, 2)
+    )
+    flat = np.asarray(axes, dtype=object).ravel()
+    for axis, panel in zip(flat, panels, strict=True):
+        means, errors = _metric_mean_and_error(
+            rows,
+            panel.metric,
+            percent=panel.percent,
+        )
+        valid = np.isfinite(means)
+        if np.any(valid):
+            axis.plot(
+                x[valid],
+                means[valid],
+                color="tab:blue",
+                marker="o",
+                label="Condition mean",
+            )
+            with_error = valid & np.isfinite(errors)
+            if np.any(with_error):
+                axis.errorbar(
+                    x[with_error],
+                    means[with_error],
+                    yerr=errors[with_error],
+                    color="tab:blue",
+                    fmt="none",
+                    capsize=4,
+                    label="Repeat SD",
+                )
+            axis.legend(loc="best")
+        else:
+            axis.text(
+                0.5,
+                0.5,
+                "No valid values",
+                ha="center",
+                va="center",
+                transform=axis.transAxes,
+            )
+        if panel.zero_reference:
+            axis.axhline(
+                0.0,
+                color="0.4",
+                linestyle=":",
+                label="Zero reference",
+            )
+        if panel.percent:
+            axis.set_ylim(bottom=0.0)
+        axis.set_title(panel.title)
+        axis.set_ylabel(panel.ylabel)
+        axis.set_xlabel(x_label)
+        axis.grid(True, alpha=0.25)
+        if x_labels is not None:
+            axis.set_xticks(x, labels=x_labels, rotation=15)
+    figure.suptitle(title)
+    figure.text(
+        0.5,
+        0.005,
+        (
+            "Error bars show repeat-to-repeat sample SD (n ≤ 3), "
+            "not confidence intervals. Missing metrics are not plotted."
+        ),
+        ha="center",
+        fontsize=9,
+    )
+    return figure
+
+
+def _metric_mean_and_error(
+    rows: Sequence[Mapping[str, object]],
+    metric: str,
+    *,
+    percent: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    scale = 100.0 if percent else 1.0
+    means = np.asarray(
+        [
+            _condition_optional_float(row, f"{metric}_mean")
+            * scale
+            for row in rows
+        ],
+        dtype=np.float64,
+    )
+    errors = np.asarray(
+        [
+            _condition_optional_float(
+                row,
+                f"{metric}_repeat_std",
+            )
+            * scale
+            for row in rows
+        ],
+        dtype=np.float64,
+    )
+    return means, errors
+
+
+def _condition_optional_float(
+    row: Mapping[str, object],
+    key: str,
+) -> float:
+    value = row.get(key)
+    if value is None:
+        return float("nan")
+    if isinstance(value, bool) or not isinstance(
+        value,
+        (int, float, np.integer, np.floating),
+    ):
+        raise TypeError(f"Condition row {key} must be numeric or None")
+    result = float(value)
+    if not np.isfinite(result):
+        return float("nan")
+    return result
+
+
+def _condition_int(row: Mapping[str, object], key: str) -> int:
+    value = row.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"Condition row {key} must be an integer")
+    return value
+
+
+def _condition_text(row: Mapping[str, object], key: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        raise TypeError(f"Condition row {key} must be a non-empty string")
+    return value
+
+
+def _figure_png_bytes(figure: object) -> bytes:
+    from matplotlib.figure import Figure
+
+    if not isinstance(figure, Figure):
+        raise TypeError("figure must be a Matplotlib Figure")
+    stream = BytesIO()
+    try:
+        figure.savefig(stream, format="png", dpi=160)
+        return stream.getvalue()
+    finally:
+        figure.clear()
 
 
 def _build_csv_text(
