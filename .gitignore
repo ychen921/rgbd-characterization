@@ -36,6 +36,8 @@ results/*
 !results/.gitkeep
 !results/tf_tree/.gitkeep
 !results/scene01_white_depth_characterization_summary.md
+!results/baseline_summary_review
+!results/edge_summary
 
 # Config
 config/roi*

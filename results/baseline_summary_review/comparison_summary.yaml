@@ -1,0 +1,240 @@
+inputs:
+  expected_dataset_count: 42
+  observed_dataset_count: 42
+  condition_count: 14
+  experiments:
+  - scene01_white_d050_r01
+  - scene01_white_d050_r02
+  - scene01_white_d050_r03
+  - scene01_white_d100_r01
+  - scene01_white_d100_r02
+  - scene01_white_d100_r03
+  - scene01_white_d150_r01
+  - scene01_white_d150_r02
+  - scene01_white_d150_r03
+  - scene01_white_d200_r01
+  - scene01_white_d200_r02
+  - scene01_white_d200_r03
+  - scene01_white_d300_r01
+  - scene01_white_d300_r02
+  - scene01_white_d300_r03
+  - scene02_white_d100_r01
+  - scene02_white_d100_r02
+  - scene02_white_d100_r03
+  - scene02_yaw15_white_d100_r01
+  - scene02_yaw15_white_d100_r02
+  - scene02_yaw15_white_d100_r03
+  - scene02_yaw30_white_d100_r01
+  - scene02_yaw30_white_d100_r02
+  - scene02_yaw30_white_d100_r03
+  - scene02_yaw45_white_d100_r01
+  - scene02_yaw45_white_d100_r02
+  - scene02_yaw45_white_d100_r03
+  - scene02_yaw60_white_d100_r01
+  - scene02_yaw60_white_d100_r02
+  - scene02_yaw60_white_d100_r03
+  - scene03_black_d100_r01
+  - scene03_black_d100_r02
+  - scene03_black_d100_r03
+  - scene03_cbd_d100_r01
+  - scene03_cbd_d100_r02
+  - scene03_cbd_d100_r03
+  - scene03_reflection_d100_r01
+  - scene03_reflection_d100_r02
+  - scene03_reflection_d100_r03
+  - scene03_transparent_d100_r01
+  - scene03_transparent_d100_r02
+  - scene03_transparent_d100_r03
+  summary_paths:
+  - results/scene01_white_d050_r01/baseline/summary.yaml
+  - results/scene01_white_d050_r02/baseline/summary.yaml
+  - results/scene01_white_d050_r03/baseline/summary.yaml
+  - results/scene01_white_d100_r01/baseline/summary.yaml
+  - results/scene01_white_d100_r02/baseline/summary.yaml
+  - results/scene01_white_d100_r03/baseline/summary.yaml
+  - results/scene01_white_d150_r01/baseline/summary.yaml
+  - results/scene01_white_d150_r02/baseline/summary.yaml
+  - results/scene01_white_d150_r03/baseline/summary.yaml
+  - results/scene01_white_d200_r01/baseline/summary.yaml
+  - results/scene01_white_d200_r02/baseline/summary.yaml
+  - results/scene01_white_d200_r03/baseline/summary.yaml
+  - results/scene01_white_d300_r01/baseline/summary.yaml
+  - results/scene01_white_d300_r02/baseline/summary.yaml
+  - results/scene01_white_d300_r03/baseline/summary.yaml
+  - results/scene02_white_d100_r01/baseline/summary.yaml
+  - results/scene02_white_d100_r02/baseline/summary.yaml
+  - results/scene02_white_d100_r03/baseline/summary.yaml
+  - results/scene02_yaw15_white_d100_r01/baseline/summary.yaml
+  - results/scene02_yaw15_white_d100_r02/baseline/summary.yaml
+  - results/scene02_yaw15_white_d100_r03/baseline/summary.yaml
+  - results/scene02_yaw30_white_d100_r01/baseline/summary.yaml
+  - results/scene02_yaw30_white_d100_r02/baseline/summary.yaml
+  - results/scene02_yaw30_white_d100_r03/baseline/summary.yaml
+  - results/scene02_yaw45_white_d100_r01/baseline/summary.yaml
+  - results/scene02_yaw45_white_d100_r02/baseline/summary.yaml
+  - results/scene02_yaw45_white_d100_r03/baseline/summary.yaml
+  - results/scene02_yaw60_white_d100_r01/baseline/summary.yaml
+  - results/scene02_yaw60_white_d100_r02/baseline/summary.yaml
+  - results/scene02_yaw60_white_d100_r03/baseline/summary.yaml
+  - results/scene03_black_d100_r01/baseline/summary.yaml
+  - results/scene03_black_d100_r02/baseline/summary.yaml
+  - results/scene03_black_d100_r03/baseline/summary.yaml
+  - results/scene03_cbd_d100_r01/baseline/summary.yaml
+  - results/scene03_cbd_d100_r02/baseline/summary.yaml
+  - results/scene03_cbd_d100_r03/baseline/summary.yaml
+  - results/scene03_reflection_d100_r01/baseline/summary.yaml
+  - results/scene03_reflection_d100_r02/baseline/summary.yaml
+  - results/scene03_reflection_d100_r03/baseline/summary.yaml
+  - results/scene03_transparent_d100_r01/baseline/summary.yaml
+  - results/scene03_transparent_d100_r02/baseline/summary.yaml
+  - results/scene03_transparent_d100_r03/baseline/summary.yaml
+comparison_groups:
+  scene01_distance:
+    scene: scene01
+    independent_variable: nominal_distance_mm
+    values:
+    - 500
+    - 1000
+    - 1500
+    - 2000
+    - 3000
+    conditions:
+    - scene01_white_d050
+    - scene01_white_d100
+    - scene01_white_d150
+    - scene01_white_d200
+    - scene01_white_d300
+  scene02_angle:
+    scene: scene02
+    independent_variable: yaw_deg
+    values:
+    - 0
+    - 15
+    - 30
+    - 45
+    - 60
+    conditions:
+    - scene02_white_d100
+    - scene02_yaw15_white_d100
+    - scene02_yaw30_white_d100
+    - scene02_yaw45_white_d100
+    - scene02_yaw60_white_d100
+  scene03_target:
+    scene: scene03
+    independent_variable: target
+    values:
+    - black
+    - cbd
+    - reflection
+    - transparent
+    conditions:
+    - scene03_black_d100
+    - scene03_cbd_d100
+    - scene03_reflection_d100
+    - scene03_transparent_d100
+common_analysis:
+  depth_camera:
+    config: config/calib/depth_camera_info.yaml
+    frame_id: camera_depth_optical_frame
+    width: 848
+    height: 480
+    fx: 412.45037841796875
+    fy: 412.45037841796875
+    cx: 422.34375
+    cy: 241.32501220703125
+  depth_preprocessing:
+    excluded_raw_values:
+    - 0
+    - 65535
+    depth_scale_to_mm: 1.0
+  temporal_noise:
+    min_valid_ratio: 0.9
+  plane_fitting:
+    method: svd
+    inlier_threshold_mm: 5.0
+    min_valid_points: 100
+repeat_scope:
+  repeat_count_per_condition: 3
+  statistic: sample_standard_deviation
+  ddof: 1
+  confidence_intervals_available: false
+  error_bar_definition: repeat-to-repeat sample standard deviation
+roi_coverage:
+  conditions:
+  - condition: scene01_white_d050
+    width: 250
+    height: 170
+    pixel_count: 42500
+  - condition: scene01_white_d100
+    width: 191
+    height: 161
+    pixel_count: 30751
+  - condition: scene01_white_d150
+    width: 141
+    height: 111
+    pixel_count: 15651
+  - condition: scene01_white_d200
+    width: 107
+    height: 91
+    pixel_count: 9737
+  - condition: scene01_white_d300
+    width: 62
+    height: 55
+    pixel_count: 3410
+  - condition: scene02_white_d100
+    width: 174
+    height: 134
+    pixel_count: 23316
+  - condition: scene02_yaw15_white_d100
+    width: 162
+    height: 127
+    pixel_count: 20574
+  - condition: scene02_yaw30_white_d100
+    width: 164
+    height: 121
+    pixel_count: 19844
+  - condition: scene02_yaw45_white_d100
+    width: 132
+    height: 112
+    pixel_count: 14784
+  - condition: scene02_yaw60_white_d100
+    width: 83
+    height: 98
+    pixel_count: 8134
+  - condition: scene03_black_d100
+    width: 107
+    height: 203
+    pixel_count: 21721
+  - condition: scene03_cbd_d100
+    width: 91
+    height: 193
+    pixel_count: 17563
+  - condition: scene03_reflection_d100
+    width: 216
+    height: 173
+    pixel_count: 37368
+  - condition: scene03_transparent_d100
+    width: 132
+    height: 102
+    pixel_count: 13464
+metric_coverage:
+  expected_valid_count_per_condition: 3
+  applicable_metric_condition_pairs: 299
+  complete_metric_condition_pairs: 299
+  incomplete: []
+  not_applicable:
+  - scene: scene01
+    metric: tilt_error_from_nominal_deg
+  - scene: scene03
+    metric: tilt_error_from_nominal_deg
+  warnings: []
+interpretation_limits:
+- nominal offsets are setup-relative differences, not sensor bias
+- repeat error bars are sample standard deviations, not confidence intervals
+- within-recording temporal variation is distinct from repeat variation
+- ROI dimensions differ between conditions
+- Scene 02 nominal yaw values are setup labels, not measured ground truth; tilt error
+  includes setup-angle uncertainty
+- Scene 02 fitted-plane distance is perpendicular to the plane and its nominal-distance
+  offset is not a direct sensor-bias estimate
+- metrics are not combined into a generic quality score
