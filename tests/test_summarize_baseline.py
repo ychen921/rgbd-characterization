@@ -255,6 +255,13 @@ def _save_summary(path: Path, summary: dict[str, object]) -> None:
     )
 
 
+def _fake_artifacts() -> dict[str, bytes]:
+    return {
+        filename: f"payload:{filename}".encode("utf-8")
+        for filename in summarize_baseline.OUTPUT_FILENAMES
+    }
+
+
 def test_expected_matrix_and_name_parsing() -> None:
     experiments = summarize_baseline.build_expected_experiments()
 
@@ -895,3 +902,302 @@ def test_build_artifacts_returns_csv_yaml_and_six_valid_pngs(
         assert decoded is not None
         assert decoded.size > 0
     assert set(tmp_path.rglob("*")) == before
+
+
+def test_parse_args_uses_defaults_and_explicit_paths() -> None:
+    defaults = summarize_baseline.parse_args([])
+    assert defaults.results_root == summarize_baseline.DEFAULT_RESULTS_ROOT
+    assert defaults.output_dir == summarize_baseline.DEFAULT_OUTPUT_DIR
+
+    explicit = summarize_baseline.parse_args(
+        [
+            "--results-root",
+            "custom-results",
+            "--output-dir",
+            "custom-output",
+        ]
+    )
+    assert explicit.results_root == Path("custom-results")
+    assert explicit.output_dir == Path("custom-output")
+
+    with pytest.raises(SystemExit):
+        summarize_baseline.parse_args(["unexpected-positional"])
+
+
+def test_save_writes_all_artifacts_and_preserves_unrelated_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    output_dir = tmp_path / "summary"
+    output_dir.mkdir()
+    unrelated = output_dir / "notes.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+    artifacts = _fake_artifacts()
+    monkeypatch.setattr(
+        summarize_baseline,
+        "build_baseline_summary_artifacts",
+        lambda _comparison: artifacts,
+    )
+
+    saved = summarize_baseline.save_baseline_summary(
+        output_dir,
+        comparison,
+    )
+
+    assert saved == output_dir
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+    for filename, payload in artifacts.items():
+        assert (output_dir / filename).read_bytes() == payload
+    assert len(tuple(output_dir.iterdir())) == 10
+
+
+def test_save_preflights_all_conflicts_before_building(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    output_dir = tmp_path / "summary"
+    output_dir.mkdir()
+    conflicts = (
+        summarize_baseline.OUTPUT_RECORDING_CSV_FILENAME,
+        summarize_baseline.SCENE03_PLANARITY_FILENAME,
+    )
+    for filename in conflicts:
+        (output_dir / filename).write_text("existing", encoding="utf-8")
+
+    def unexpected_build(
+        _comparison: summarize_baseline.BaselineComparison,
+    ) -> dict[str, bytes]:
+        raise AssertionError("artifact builder must not run")
+
+    monkeypatch.setattr(
+        summarize_baseline,
+        "build_baseline_summary_artifacts",
+        unexpected_build,
+    )
+
+    with pytest.raises(FileExistsError) as error:
+        summarize_baseline.save_baseline_summary(
+            output_dir,
+            comparison,
+        )
+
+    for filename in conflicts:
+        assert filename in str(error.value)
+        assert (output_dir / filename).read_text(
+            encoding="utf-8"
+        ) == "existing"
+    assert set(path.name for path in output_dir.iterdir()) == set(
+        conflicts
+    )
+
+
+def test_artifact_contract_rejects_missing_invalid_and_empty_payloads(
+) -> None:
+    valid = _fake_artifacts()
+    summarize_baseline._validate_artifact_payloads(valid)
+
+    missing = dict(valid)
+    missing.pop(summarize_baseline.OUTPUT_YAML_FILENAME)
+    with pytest.raises(ValueError, match="missing"):
+        summarize_baseline._validate_artifact_payloads(missing)
+
+    unexpected = dict(valid)
+    unexpected["unexpected.bin"] = b"extra"
+    with pytest.raises(ValueError, match="unexpected"):
+        summarize_baseline._validate_artifact_payloads(unexpected)
+
+    invalid: dict[str, object] = dict(valid)
+    invalid[summarize_baseline.OUTPUT_YAML_FILENAME] = "not bytes"
+    with pytest.raises(TypeError, match="must contain bytes"):
+        summarize_baseline._validate_artifact_payloads(invalid)
+
+    empty = dict(valid)
+    empty[summarize_baseline.OUTPUT_YAML_FILENAME] = b""
+    with pytest.raises(ValueError, match="is empty"):
+        summarize_baseline._validate_artifact_payloads(empty)
+
+
+def test_save_rejects_output_path_that_is_not_a_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    output_path = tmp_path / "summary"
+    output_path.write_text("not a directory", encoding="utf-8")
+
+    def unexpected_build(
+        _comparison: summarize_baseline.BaselineComparison,
+    ) -> dict[str, bytes]:
+        raise AssertionError("artifact builder must not run")
+
+    monkeypatch.setattr(
+        summarize_baseline,
+        "build_baseline_summary_artifacts",
+        unexpected_build,
+    )
+
+    with pytest.raises(NotADirectoryError, match="not a directory"):
+        summarize_baseline.save_baseline_summary(
+            output_path,
+            comparison,
+        )
+    assert output_path.read_text(encoding="utf-8") == "not a directory"
+
+
+def test_save_rolls_back_created_files_after_failed_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    output_dir = tmp_path / "summary"
+    output_dir.mkdir()
+    unrelated = output_dir / "notes.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        summarize_baseline,
+        "build_baseline_summary_artifacts",
+        lambda _comparison: _fake_artifacts(),
+    )
+    original_open = Path.open
+    failing_name = summarize_baseline.SCENE02_PLANARITY_FILENAME
+
+    def failing_open(
+        path: Path,
+        mode: str = "r",
+        *args: object,
+        **kwargs: object,
+    ):
+        if path.name == failing_name and mode == "xb":
+            raise OSError("simulated failure")
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+
+    with pytest.raises(OSError, match="simulated failure"):
+        summarize_baseline.save_baseline_summary(
+            output_dir,
+            comparison,
+        )
+
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+    assert set(path.name for path in output_dir.iterdir()) == {
+        "notes.txt"
+    }
+
+
+def test_print_completion_reports_scope_coverage_and_paths(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+
+    summarize_baseline.print_completion(
+        comparison,
+        tmp_path / "summary",
+    )
+    output = capsys.readouterr().out
+
+    assert "Baseline summary complete." in output
+    assert "42 recordings" in output
+    assert "14 conditions" in output
+    assert "3 repeats per condition" in output
+    assert "0 incomplete metric-condition pairs" in output
+    assert "sample standard deviation (ddof=1)" in output
+    assert "not confidence intervals" in output
+    for filename in summarize_baseline.OUTPUT_FILENAMES:
+        assert filename in output
+
+
+def test_print_completion_reports_metric_coverage_warning(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    comparison.records[0].summary["temporal_noise"][
+        "median_std_mm"
+    ] = None
+
+    summarize_baseline.print_completion(
+        comparison,
+        tmp_path / "summary",
+    )
+    output = capsys.readouterr().out
+
+    assert "1 incomplete metric-condition pairs" in output
+    assert "Metric coverage warnings:" in output
+    assert "2/3 valid repeat values" in output
+    assert "temporal_median_std_mm" in output
+
+
+def test_main_writes_temporary_output_and_rejects_second_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results_root, _ = _write_matrix(tmp_path / "inputs")
+    output_dir = tmp_path / "summary"
+
+    status = summarize_baseline.main(
+        [
+            "--results-root",
+            str(results_root),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert status == 0
+    assert set(path.name for path in output_dir.iterdir()) == set(
+        summarize_baseline.OUTPUT_FILENAMES
+    )
+    first_payloads = {
+        filename: (output_dir / filename).read_bytes()
+        for filename in summarize_baseline.OUTPUT_FILENAMES
+    }
+    output = capsys.readouterr().out
+    assert "Baseline summary complete." in output
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        summarize_baseline.main(
+            [
+                "--results-root",
+                str(results_root),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+    assert {
+        filename: (output_dir / filename).read_bytes()
+        for filename in summarize_baseline.OUTPUT_FILENAMES
+    } == first_payloads

@@ -1,5 +1,6 @@
 """Load and validate the controlled Scene 01--03 baseline matrix."""
 
+import argparse
 from collections.abc import Mapping, Sequence
 import csv
 from dataclasses import dataclass
@@ -33,6 +34,17 @@ SCENE02_DEPTH_QUALITY_FILENAME = "scene02_angle_depth_quality.png"
 SCENE02_PLANARITY_FILENAME = "scene02_angle_planarity.png"
 SCENE03_DEPTH_QUALITY_FILENAME = "scene03_target_depth_quality.png"
 SCENE03_PLANARITY_FILENAME = "scene03_target_planarity.png"
+OUTPUT_FILENAMES = (
+    OUTPUT_RECORDING_CSV_FILENAME,
+    OUTPUT_CONDITION_CSV_FILENAME,
+    OUTPUT_YAML_FILENAME,
+    SCENE01_DEPTH_QUALITY_FILENAME,
+    SCENE01_PLANARITY_FILENAME,
+    SCENE02_DEPTH_QUALITY_FILENAME,
+    SCENE02_PLANARITY_FILENAME,
+    SCENE03_DEPTH_QUALITY_FILENAME,
+    SCENE03_PLANARITY_FILENAME,
+)
 
 REQUIRED_FRAME_MEDIAN_COLUMNS = frozenset(
     {
@@ -244,6 +256,34 @@ class PlotMetric:
     ylabel: str
     percent: bool = False
     zero_reference: bool = False
+
+
+def parse_args(
+    argv: Sequence[str] | None = None,
+) -> argparse.Namespace:
+    """Parse command-line arguments for planar baseline summarization."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Summarize the controlled 42-result Scene 01--03 "
+            "planar baseline matrix."
+        )
+    )
+    parser.add_argument(
+        "--results-root",
+        type=Path,
+        default=DEFAULT_RESULTS_ROOT,
+        help="Baseline results root (default: results).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            "Summary artifact directory "
+            "(default: results/baseline_summary)."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 def _distance_token(distance_mm: int) -> str:
@@ -1018,6 +1058,110 @@ def build_baseline_summary_artifacts(
     }
 
 
+def save_baseline_summary(
+    output_dir: Path,
+    comparison: BaselineComparison,
+) -> Path:
+    """Save all planar summary artifacts without overwrite or partials."""
+    validated = _validate_comparison_result(comparison)
+    resolved_output = Path(output_dir).expanduser()
+    if resolved_output.exists() and not resolved_output.is_dir():
+        raise NotADirectoryError(
+            f"Baseline summary output is not a directory: "
+            f"{resolved_output}"
+        )
+
+    output_paths = {
+        filename: resolved_output / filename
+        for filename in OUTPUT_FILENAMES
+    }
+    existing = [
+        path
+        for path in output_paths.values()
+        if path.exists()
+    ]
+    if existing:
+        raise FileExistsError(
+            "Baseline summary output already exists: "
+            + ", ".join(str(path) for path in existing)
+        )
+
+    artifacts = build_baseline_summary_artifacts(validated)
+    _validate_artifact_payloads(artifacts)
+    resolved_output.mkdir(parents=True, exist_ok=True)
+    created: list[Path] = []
+    try:
+        for filename in OUTPUT_FILENAMES:
+            path = output_paths[filename]
+            with path.open("xb") as stream:
+                created.append(path)
+                stream.write(artifacts[filename])
+    except BaseException:
+        for path in reversed(created):
+            _remove_created_output(path)
+        raise
+    return resolved_output
+
+
+def print_completion(
+    comparison: BaselineComparison,
+    output_dir: Path,
+) -> None:
+    """Print a concise planar-summary completion report."""
+    validated = _validate_comparison_result(comparison)
+    summary = build_comparison_summary(validated)
+    metric_coverage = _nested_mapping(summary, "metric_coverage")
+    incomplete = metric_coverage.get("incomplete")
+    warnings = metric_coverage.get("warnings")
+    if not isinstance(incomplete, list) or not isinstance(warnings, list):
+        raise ValueError("metric coverage lists are invalid")
+
+    print("Baseline summary complete.")
+    print()
+    print("Datasets:")
+    print(f"  {len(validated.records)} recordings")
+    print()
+    print("Conditions:")
+    print("  14 conditions")
+    print("  3 repeats per condition")
+    print()
+    print("Comparison groups:")
+    print("  Scene 01: distance")
+    print("  Scene 02: yaw")
+    print("  Scene 03: target")
+    print()
+    print("Metric coverage:")
+    print(f"  {len(incomplete)} incomplete metric-condition pairs")
+    if warnings:
+        print()
+        print("Metric coverage warnings:")
+        for warning in warnings:
+            print(f"  {warning}")
+    print()
+    print("Repeat statistic:")
+    print("  sample standard deviation (ddof=1)")
+    print("  error bars are not confidence intervals")
+    print()
+    print("Saved:")
+    resolved_output = Path(output_dir).expanduser()
+    for filename in OUTPUT_FILENAMES:
+        print(f"  {_summary_path(resolved_output / filename)}")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the complete planar baseline summary CLI."""
+    args = parse_args(argv)
+    comparison = load_and_validate_baseline_comparison(
+        args.results_root
+    )
+    output_dir = save_baseline_summary(
+        args.output_dir,
+        comparison,
+    )
+    print_completion(comparison, output_dir)
+    return 0
+
+
 def _recording_row(
     record: BaselineSummaryRecord,
 ) -> dict[str, object]:
@@ -1572,6 +1716,44 @@ def _figure_png_bytes(figure: object) -> bytes:
         return stream.getvalue()
     finally:
         figure.clear()
+
+
+def _validate_artifact_payloads(
+    artifacts: Mapping[str, object],
+) -> None:
+    expected = set(OUTPUT_FILENAMES)
+    observed = set(artifacts)
+    if observed != expected:
+        missing = sorted(expected - observed)
+        unexpected = sorted(observed - expected)
+        details: list[str] = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected: " + ", ".join(unexpected))
+        raise ValueError(
+            "Baseline summary artifact set is invalid ("
+            + "; ".join(details)
+            + ")"
+        )
+    for filename in OUTPUT_FILENAMES:
+        payload = artifacts[filename]
+        if not isinstance(payload, bytes):
+            raise TypeError(
+                f"Baseline summary artifact must contain bytes: "
+                f"{filename}"
+            )
+        if not payload:
+            raise ValueError(
+                f"Baseline summary artifact is empty: {filename}"
+            )
+
+
+def _remove_created_output(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _build_csv_text(
@@ -2192,3 +2374,7 @@ def _csv_non_negative_float(
     if not np.isfinite(result) or result < 0:
         raise ValueError(f"{key} must be finite and non-negative: {path}")
     return result
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
