@@ -3167,8 +3167,10 @@ Scene 03
 
 Error bars describe repeat-to-repeat sample standard deviation. They are not
 confidence intervals. Nominal-distance offsets are descriptive setup-relative
-differences and must not be labeled sensor bias. Do not combine depth quality,
-temporal noise, measured offset, and planarity into a generic score.
+differences and must not be labeled sensor bias. Scene 02 nominal yaw values
+are setup labels rather than measured ground truth, so reported tilt error also
+includes setup-angle uncertainty. Do not combine depth quality, temporal noise,
+measured offset, and planarity into a generic score.
 
 ### 21.7 Provenance and Coverage
 

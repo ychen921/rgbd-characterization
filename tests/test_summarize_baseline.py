@@ -724,6 +724,15 @@ def test_build_comparison_summary_records_groups_and_provenance(
             "metric": "tilt_error_from_nominal_deg",
         },
     ]
+    assert any(
+        "not measured ground truth" in limit
+        and "setup-angle uncertainty" in limit
+        for limit in summary["interpretation_limits"]
+    )
+    assert any(
+        "perpendicular to the plane" in limit
+        for limit in summary["interpretation_limits"]
+    )
 
 
 def test_metric_coverage_reports_missing_repeats_but_not_na_metrics(
@@ -793,6 +802,13 @@ def test_plot_functions_build_expected_panels_and_references(
 
     assert [len(figure.axes) for figure in figures] == [4, 6, 4, 6, 4, 6]
     scene02_planarity = figures[3]
+    footer = next(
+        text
+        for text in scene02_planarity.texts
+        if text.get_gid() == "repeat-statistic-note"
+    )
+    assert "not measured ground truth" in footer.get_text()
+    assert "setup-angle uncertainty" in footer.get_text()
     labels = {
         line.get_label()
         for line in scene02_planarity.axes[0].lines
@@ -806,6 +822,47 @@ def test_plot_functions_build_expected_panels_and_references(
     assert len(zero_lines) == 1
     assert np.all(np.asarray(zero_lines[0].get_ydata()) == 0.0)
     for figure in figures:
+        figure.clear()
+
+
+def test_plot_footers_do_not_overlap_axis_labels(
+    tmp_path: Path,
+) -> None:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    results_root, _ = _write_matrix(tmp_path)
+    comparison = (
+        summarize_baseline.load_and_validate_baseline_comparison(
+            results_root
+        )
+    )
+    figures = (
+        summarize_baseline.plot_scene01_depth_quality(comparison),
+        summarize_baseline.plot_scene01_planarity(comparison),
+        summarize_baseline.plot_scene02_depth_quality(comparison),
+        summarize_baseline.plot_scene02_planarity(comparison),
+        summarize_baseline.plot_scene03_depth_quality(comparison),
+        summarize_baseline.plot_scene03_planarity(comparison),
+    )
+
+    for figure in figures:
+        canvas = FigureCanvasAgg(figure)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        footer = next(
+            text
+            for text in figure.texts
+            if text.get_gid() == "repeat-statistic-note"
+        )
+        footer_box = footer.get_window_extent(renderer)
+        for axis in figure.axes:
+            label_box = axis.xaxis.label.get_window_extent(renderer)
+            assert label_box.y0 >= footer_box.y1 + 4.0
+            for tick_label in axis.get_xticklabels():
+                if not tick_label.get_visible():
+                    continue
+                tick_box = tick_label.get_window_extent(renderer)
+                assert tick_box.y0 >= footer_box.y1 + 4.0
         figure.clear()
 
 

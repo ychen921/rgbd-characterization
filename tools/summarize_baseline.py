@@ -800,8 +800,14 @@ def build_comparison_summary(
             ),
             "ROI dimensions differ between conditions",
             (
-                "Scene 02 tilt error depends on nominal setup-angle "
-                "accuracy"
+                "Scene 02 nominal yaw values are setup labels, not "
+                "measured ground truth; tilt error includes setup-angle "
+                "uncertainty"
+            ),
+            (
+                "Scene 02 fitted-plane distance is perpendicular to "
+                "the plane and its nominal-distance offset is not a "
+                "direct sensor-bias estimate"
             ),
             "metrics are not combined into a generic quality score",
         ],
@@ -916,6 +922,10 @@ def plot_scene02_planarity(
         x_labels=None,
         x_label="Nominal yaw (deg)",
         title="Scene 02: angle-dependent planarity",
+        interpretation_note=(
+            "Scene 02 nominal yaw is not measured ground truth; "
+            "tilt error includes setup-angle uncertainty."
+        ),
         panels=(
             PlotMetric(
                 "tilt_median_deg",
@@ -1563,6 +1573,7 @@ def _plot_condition_panels(
     x_label: str,
     title: str,
     panels: Sequence[PlotMetric],
+    interpretation_note: str | None = None,
 ):
     from matplotlib.figure import Figure
 
@@ -1573,7 +1584,7 @@ def _plot_condition_panels(
 
     figure = Figure(
         figsize=(12.0, 8.0 if len(panels) == 4 else 12.0),
-        constrained_layout=True,
+        constrained_layout=False,
     )
     axes = figure.subplots(2, 2) if len(panels) == 4 else (
         figure.subplots(3, 2)
@@ -1629,17 +1640,33 @@ def _plot_condition_panels(
         axis.set_xlabel(x_label)
         axis.grid(True, alpha=0.25)
         if x_labels is not None:
-            axis.set_xticks(x, labels=x_labels, rotation=15)
-    figure.suptitle(title)
-    figure.text(
+            axis.set_xticks(
+                x,
+                labels=x_labels,
+                rotation=10,
+                ha="right",
+            )
+    figure.suptitle(title, y=0.985)
+    footer_text = (
+        "Error bars show repeat-to-repeat sample SD (n ≤ 3), "
+        "not confidence intervals. Missing metrics are not plotted."
+    )
+    if interpretation_note is not None:
+        footer_text = f"{footer_text}\n{interpretation_note}"
+    footer = figure.text(
         0.5,
-        0.005,
-        (
-            "Error bars show repeat-to-repeat sample SD (n ≤ 3), "
-            "not confidence intervals. Missing metrics are not plotted."
-        ),
+        0.018,
+        footer_text,
         ha="center",
+        va="bottom",
         fontsize=9,
+    )
+    footer.set_gid("repeat-statistic-note")
+    bottom_margin = 0.10 if x_labels is not None else 0.065
+    if interpretation_note is not None:
+        bottom_margin += 0.025
+    figure.tight_layout(
+        rect=(0.0, bottom_margin, 1.0, 0.955),
     )
     return figure
 
