@@ -1333,6 +1333,15 @@ scripts/record_alignment_experiment.sh \
 The actual camera node and registration parameter must be verified for the
 installed wrapper and must not be accepted as undocumented assumptions.
 
+For the Gemini 330 series, start the camera with an explicit depth-unit
+contract before running the recorder:
+
+```bash
+ros2 launch orbbec_camera gemini_330_series.launch.py \
+  depth_registration:=true \
+  depth_precision:=1mm
+```
+
 Required experiment arguments:
 
 ```text

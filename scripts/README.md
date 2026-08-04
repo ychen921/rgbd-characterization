@@ -166,12 +166,14 @@ The Gemini 330 series launch defaults to registration disabled. Start it with:
 
 ```bash
 ros2 launch orbbec_camera gemini_330_series.launch.py \
-  depth_registration:=true
+  depth_registration:=true \
+  depth_precision:=1mm
 ```
 
-The recorder then verifies the runtime parameter, `align_mode`, color alignment
-target, topics, encodings, CameraInfo, frame IDs, and the expected `1280x720`
-color/aligned-depth pixel grid.
+The recorder then verifies both runtime parameters, `align_mode`, color
+alignment target, topics, encodings, CameraInfo, frame IDs, and the expected
+`1280x720` color/aligned-depth pixel grid. An empty or non-`1mm`
+`depth_precision` is a preflight failure.
 
 ### Example
 

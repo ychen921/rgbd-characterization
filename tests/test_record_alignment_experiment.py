@@ -62,7 +62,7 @@ if [[ "$1 $2" == "param get" ]]; then
             printf 'String value is: global\\n'
             ;;
         depth_precision)
-            printf 'String value is: 1mm\\n'
+            printf 'String value is: %s\\n' "${FAKE_DEPTH_PRECISION-1mm}"
             ;;
         *)
             printf 'Unknown parameter: %s\\n' "${parameter}" >&2
@@ -210,6 +210,7 @@ def test_warn_preflight_records_only_discovered_topics(tmp_path: Path) -> None:
     }
     assert experiment["color"]["width"] == 1280
     assert experiment["depth"]["height"] == 720
+    assert experiment["depth"]["precision"] == "1mm"
 
     post_recording = yaml.safe_load(
         (experiment_dir / "post_recording.yaml").read_text(encoding="utf-8")
@@ -260,6 +261,42 @@ def test_disabled_registration_fails_without_formal_directory(
     assert registration_check["status"] == "fail"
     assert "depth_registration:=true" in registration_check["detail"]
 
+    assert not any(
+        line.startswith("bag record ")
+        for line in command_log.read_text(encoding="utf-8").splitlines()
+    )
+
+
+def test_unresolved_depth_precision_fails_without_recording(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    command_log = install_fake_ros2(bin_dir)
+    environment = recorder_environment(tmp_path, command_log)
+    environment["FAKE_DEPTH_PRECISION"] = ""
+
+    completed = subprocess.run(
+        recorder_command(),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 1
+    experiment_name = "scene05_alignment_d100_center_yaw00_r01"
+    assert not (tmp_path / "bags" / experiment_name).exists()
+
+    report_path = (
+        tmp_path
+        / "results"
+        / "preflight"
+        / f"{experiment_name}_preflight.yaml"
+    )
+    report = yaml.safe_load(report_path.read_text(encoding="utf-8"))
+    depth_check = next(
+        check for check in report["checks"] if check["name"] == "depth_contract"
+    )
+    assert depth_check["status"] == "fail"
+    assert "depth_precision:=1mm" in depth_check["detail"]
     assert not any(
         line.startswith("bag record ")
         for line in command_log.read_text(encoding="utf-8").splitlines()

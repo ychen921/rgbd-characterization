@@ -45,7 +45,8 @@ Usage:
 Start the camera first with depth registration enabled:
 
   ros2 launch orbbec_camera gemini_330_series.launch.py \
-    depth_registration:=true
+    depth_registration:=true \
+    depth_precision:=1mm
 
 Required:
   --distance-mm MM
@@ -363,6 +364,8 @@ write_preflight() {
         yaml_quote "${DEPTH_ENCODING:-unavailable}"
         printf '\n    frame_id: '
         yaml_quote "${DEPTH_FRAME_ID:-unavailable}"
+        printf '\n    precision: '
+        yaml_quote "${DEPTH_PRECISION_VALUE:-unavailable}"
         printf '\n    unit: %s\n    invalid_values: %s\n' "${DEPTH_UNIT}" "${DEPTH_INVALID_VALUES}"
         printf '  timestamps:\n'
         printf '    source: %s\n    unit: %s\n    clock_domain: ' "${TIMESTAMP_SOURCE}" "${TIMESTAMP_UNIT}"
@@ -551,15 +554,15 @@ if command -v ros2 >/dev/null 2>&1 && read_parameter depth_precision; then
             "unit=${DEPTH_UNIT}, invalid_values=${DEPTH_INVALID_VALUES}, runtime depth_precision=${DEPTH_PRECISION_VALUE}"
     elif [[ -z "${DEPTH_PRECISION_VALUE}" ]]; then
         DEPTH_PRECISION_VALUE="wrapper_default"
-        add_check depth_contract warn \
-            "unit=${DEPTH_UNIT} and invalid_values=${DEPTH_INVALID_VALUES} are documented; runtime depth_precision uses the wrapper default"
+        add_check depth_contract fail \
+            "runtime depth_precision is empty; start the camera with depth_precision:=1mm"
     else
         add_check depth_contract fail \
             "runtime depth_precision=${DEPTH_PRECISION_VALUE}; expected 1mm"
     fi
 else
-    add_check depth_contract warn \
-        "unit=${DEPTH_UNIT} and invalid_values=${DEPTH_INVALID_VALUES} are documented, but depth_precision could not be read"
+    add_check depth_contract fail \
+        "depth_precision could not be resolved; start the camera with depth_precision:=1mm"
 fi
 
 read_image_contract() {
@@ -767,6 +770,7 @@ depth:
   width: ${DEPTH_WIDTH}
   height: ${DEPTH_HEIGHT}
   encoding: ${DEPTH_ENCODING}
+  precision: ${DEPTH_PRECISION_VALUE}
   unit: ${DEPTH_UNIT}
   invalid_values: ${DEPTH_INVALID_VALUES}
 timestamps:

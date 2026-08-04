@@ -75,6 +75,7 @@ The formal dataset should be recorded with depth-to-color registration enabled.
 
 ```text
 depth_registration = true
+depth_precision = 1mm
 ```
 
 The aligned depth image must have a documented mapping to the RGB image coordinate system.
