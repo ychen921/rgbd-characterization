@@ -381,6 +381,14 @@ Replace timestamp fields with the actual capture semantics when they differ.
 Do not silently assume that bag receive time and message-header time are
 equivalent.
 
+The alignment bag reader must preserve both timestamp sources and must not pair
+frames during extraction. It must also validate that color and aligned depth
+share image dimensions, frame ID, and CameraInfo projection fields (`K`, `R`,
+and `P`). Modality-specific distortion coefficients and ROI rectification flags
+may differ: the current Orbbec SW-aligned depth reports the color projection
+with zero distortion coefficients and `do_rectify: true`, while the raw color
+CameraInfo retains its distortion coefficients.
+
 ---
 
 ## 8. Project Structure
@@ -408,7 +416,9 @@ rgbd-characterization/
 └── src/
     ├── io/
     │   ├── dataset.py
-    │   └── alignment_dataset.py
+    │   ├── alignment_dataset.py
+    │   ├── ros_image.py
+    │   └── alignment_bag_reader.py
     │
     ├── preprocessing/
     │   ├── roi.py
