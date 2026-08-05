@@ -331,6 +331,12 @@ shape (N_rgb,)
 
 depth_timestamp_ns:
 shape (N_depth,)
+
+rgb_recorded_timestamp_ns:
+shape (N_rgb,)
+
+depth_recorded_timestamp_ns:
+shape (N_depth,)
 ```
 
 If RGB and aligned depth are already paired during extraction, also store:
@@ -351,20 +357,24 @@ schema_version: 1
 color:
   array_key: rgb
   timestamp_key: rgb_timestamp_ns
+  recorded_timestamp_key: rgb_recorded_timestamp_ns
   encoding: rgb8
   channel_order: RGB
 
 depth:
   array_key: aligned_depth
   timestamp_key: depth_timestamp_ns
+  recorded_timestamp_key: depth_recorded_timestamp_ns
   encoding: 16UC1
+  precision: 1mm
   unit: mm
   invalid_values: [0, 65535]
 
 timestamps:
   unit: ns
-  source: message_header
-  clock_domain: ros_time
+  primary_source: message_header
+  recorded_source: rosbag_storage
+  header_clock_domain: global
 ```
 
 Replace timestamp fields with the actual capture semantics when they differ.
@@ -398,7 +408,7 @@ rgbd-characterization/
 └── src/
     ├── io/
     │   ├── dataset.py
-    │   └── synchronized_dataset.py
+    │   └── alignment_dataset.py
     │
     ├── preprocessing/
     │   ├── roi.py

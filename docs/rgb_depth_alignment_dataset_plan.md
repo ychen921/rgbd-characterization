@@ -489,6 +489,8 @@ rgb
 rgb_timestamp_ns
 aligned_depth
 depth_timestamp_ns
+rgb_recorded_timestamp_ns
+depth_recorded_timestamp_ns
 ```
 
 Optional paired indices:
