@@ -312,7 +312,10 @@ data/
     ├── color_camera_info.yaml
     ├── depth_camera_info.yaml
     ├── camera_params.yaml
-    └── experiment.yaml
+    ├── experiment.yaml
+    ├── preflight.yaml
+    ├── post_recording.yaml
+    └── extraction_summary.yaml
 ```
 
 Recommended arrays:
@@ -389,6 +392,11 @@ may differ: the current Orbbec SW-aligned depth reports the color projection
 with zero distortion coefficients and `do_rectify: true`, while the raw color
 CameraInfo retains its distortion coefficients.
 
+`tools/extract_alignment_dataset.py` preallocates the declared stream arrays,
+writes the dataset and traceability metadata into a same-filesystem staging
+directory, reload-validates the three NPZ archives, and atomically publishes a
+new output directory. Existing output directories are never overwritten.
+
 ---
 
 ## 8. Project Structure
@@ -407,7 +415,8 @@ rgbd-characterization/
 │   └── record_alignment_experiment.sh
 │
 ├── tools/
-│   ├── extract_data.py
+│   ├── extract_dataset.py
+│   ├── extract_alignment_dataset.py
 │   ├── select_roi.py
 │   ├── analyze_baseline.py
 │   ├── analyze_alignment.py

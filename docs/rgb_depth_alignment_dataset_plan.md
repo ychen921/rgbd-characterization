@@ -479,7 +479,10 @@ data/
     ├── color_camera_info.yaml
     ├── depth_camera_info.yaml
     ├── camera_params.yaml
-    └── experiment.yaml
+    ├── experiment.yaml
+    ├── preflight.yaml
+    ├── post_recording.yaml
+    └── extraction_summary.yaml
 ```
 
 Recommended arrays:
@@ -500,6 +503,13 @@ pair_rgb_index
 pair_depth_index
 pair_delta_ms
 ```
+
+Use `tools/extract_alignment_dataset.py` to produce this directory. Extraction
+uses a non-overwriting staging directory, reload-validates all three NPZ files,
+and only then publishes the final output directory. `extraction_summary.yaml`
+records source topics, stream contracts, frame counts, timestamp ranges, and
+storage-versus-header latency. It does not contain paired indices or pairing
+deltas; those belong to the frame-pairing phase.
 
 ---
 

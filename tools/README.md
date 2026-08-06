@@ -1,5 +1,48 @@
 # Tools
 
+## `extract_alignment_dataset.py`
+
+Extracts the unpaired RGB and SDK-aligned depth streams from one validated
+Phase 0 experiment directory. Run it with the ROS Humble system Python:
+
+```bash
+/usr/bin/python3 tools/extract_alignment_dataset.py \
+    bags/scene05_alignment_d100_center_yaw00_r01 \
+    data/scene05_alignment_d100_center_yaw00_r01
+```
+
+Arguments:
+
+```text
+extract_alignment_dataset.py EXPERIMENT_DIR OUTPUT_DIR
+```
+
+`EXPERIMENT_DIR` must contain `experiment.yaml`, `camera_params.yaml`,
+`preflight.yaml`, `post_recording.yaml`, and `rosbag/metadata.yaml`. The tool
+strictly checks the Phase 0 registration, 1280x720 color-pixel-grid,
+`depth_precision=1mm`, encoding, timestamp, CameraInfo, and stream contracts
+before publishing a dataset.
+
+The output is created atomically and is never overwritten:
+
+```text
+OUTPUT_DIR/
+├── rgb.npz
+├── aligned_depth.npz
+├── timestamps.npz
+├── color_camera_info.yaml
+├── depth_camera_info.yaml
+├── experiment.yaml
+├── camera_params.yaml
+├── preflight.yaml
+├── post_recording.yaml
+└── extraction_summary.yaml
+```
+
+RGB and aligned-depth frame counts may differ. Both message-header and rosbag
+storage timestamps are preserved without pairing; temporal pairing belongs to
+alignment Phase 2.
+
 ## `extract_dataset.py`
 
 Extracts raw depth frames from a ROS 2 bag into an NPZ dataset.
