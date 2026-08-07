@@ -242,7 +242,13 @@ def pair_frames_by_timestamp(
     depth_timestamp_ns: np.ndarray,
     config: FramePairingConfig | None = None,
 ) -> FramePairingResult:
-    """Validate pairing inputs; nearest matching is implemented in Step 2.2."""
+    """Greedily pair each RGB frame to the nearest available depth frame.
+
+    RGB frames are processed in index order. Accepted depth indices must be
+    greater than the previously accepted depth index, which makes the result
+    one-to-one and order-preserving. An out-of-threshold RGB frame is rejected
+    without consuming its nearest depth candidate.
+    """
     _validate_timestamp_array("rgb_timestamp_ns", rgb_timestamp_ns)
     _validate_timestamp_array("depth_timestamp_ns", depth_timestamp_ns)
     if config is not None and not isinstance(config, FramePairingConfig):
@@ -250,8 +256,71 @@ def pair_frames_by_timestamp(
             "config must be a FramePairingConfig or None; got "
             f"{type(config).__name__}"
         )
-    raise NotImplementedError(
-        "Nearest timestamp matching belongs to alignment Phase 2 Step 2.2"
+    pairing_config = config if config is not None else FramePairingConfig()
+
+    pairs: list[FramePair] = []
+    next_depth_index = 0
+    for rgb_index, rgb_timestamp in enumerate(rgb_timestamp_ns):
+        depth_index = _nearest_available_depth_index(
+            depth_timestamp_ns,
+            rgb_timestamp_ns=int(rgb_timestamp),
+            first_available_index=next_depth_index,
+        )
+        if depth_index is None:
+            break
+
+        depth_timestamp = int(depth_timestamp_ns[depth_index])
+        delta_ns = depth_timestamp - int(rgb_timestamp)
+        if abs(delta_ns) > pairing_config.max_abs_delta_ns:
+            continue
+
+        pairs.append(
+            FramePair(
+                rgb_index=rgb_index,
+                depth_index=depth_index,
+                rgb_timestamp_ns=int(rgb_timestamp),
+                depth_timestamp_ns=depth_timestamp,
+            )
+        )
+        next_depth_index = depth_index + 1
+
+    return FramePairingResult(
+        config=pairing_config,
+        rgb_frame_count=int(rgb_timestamp_ns.size),
+        depth_frame_count=int(depth_timestamp_ns.size),
+        pairs=tuple(pairs),
+    )
+
+
+def _nearest_available_depth_index(
+    depth_timestamp_ns: np.ndarray,
+    *,
+    rgb_timestamp_ns: int,
+    first_available_index: int,
+) -> int | None:
+    """Return the nearest eligible depth index, preferring earlier ties."""
+    if first_available_index >= depth_timestamp_ns.size:
+        return None
+
+    insertion_index = int(
+        np.searchsorted(depth_timestamp_ns, rgb_timestamp_ns, side="left")
+    )
+    insertion_index = max(insertion_index, first_available_index)
+
+    candidates: list[int] = []
+    if insertion_index > first_available_index:
+        candidates.append(insertion_index - 1)
+    if insertion_index < depth_timestamp_ns.size:
+        candidates.append(insertion_index)
+
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda index: (
+            abs(int(depth_timestamp_ns[index]) - rgb_timestamp_ns),
+            int(depth_timestamp_ns[index]),
+        ),
     )
 
 

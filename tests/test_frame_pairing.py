@@ -380,13 +380,198 @@ def test_pairing_entrypoint_rejects_invalid_config() -> None:
         pair_frames_by_timestamp(rgb, depth, config={})
 
 
-def test_pairing_entrypoint_marks_step_2_2_algorithm_boundary() -> None:
+def timestamp_array(*values: int) -> np.ndarray:
+    return np.asarray(values, dtype=np.int64)
+
+
+def threshold_ns(value: int) -> FramePairingConfig:
+    return FramePairingConfig(max_abs_delta_ms=value / 1_000_000)
+
+
+def test_pairing_entrypoint_pairs_valid_inputs_without_modifying_them() -> None:
     rgb, depth = valid_timestamps()
     original_rgb = rgb.copy()
     original_depth = depth.copy()
 
-    with pytest.raises(NotImplementedError, match="Step 2.2"):
-        pair_frames_by_timestamp(rgb, depth, FramePairingConfig())
+    result = pair_frames_by_timestamp(rgb, depth)
 
+    assert result.config == FramePairingConfig()
+    assert result.paired_rgb_indices == (0, 1)
+    assert result.paired_depth_indices == (0, 1)
+    assert tuple(pair.delta_ns for pair in result.pairs) == (1_000, 1_000)
     assert np.array_equal(rgb, original_rgb)
     assert np.array_equal(depth, original_depth)
+
+
+def test_pairing_preserves_signed_early_and_late_depth_deltas() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 200),
+        timestamp_array(95, 207),
+        threshold_ns(10),
+    )
+
+    assert tuple(pair.delta_ns for pair in result.pairs) == (-5, 7)
+
+
+def test_pairing_selects_nearest_candidate_on_either_side() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100),
+        timestamp_array(90, 103),
+        threshold_ns(20),
+    )
+
+    assert result.paired_depth_indices == (1,)
+    assert result.unmatched_depth_indices == (0,)
+    assert result.pairs[0].delta_ns == 3
+
+
+def test_pairing_prefers_earlier_depth_on_equal_distance_tie() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100),
+        timestamp_array(90, 110),
+        threshold_ns(20),
+    )
+
+    assert result.paired_depth_indices == (0,)
+    assert result.pairs[0].delta_ns == -10
+
+
+@pytest.mark.parametrize(
+    ("delta_ns", "expected_pair_count"),
+    [
+        (10, 1),
+        (-10, 1),
+        (11, 0),
+        (-11, 0),
+    ],
+)
+def test_pairing_applies_inclusive_absolute_threshold(
+    delta_ns: int,
+    expected_pair_count: int,
+) -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100),
+        timestamp_array(100 + delta_ns),
+        threshold_ns(10),
+    )
+
+    assert result.accepted_pair_count == expected_pair_count
+
+
+def test_rejected_rgb_does_not_consume_future_depth_candidate() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 200),
+        timestamp_array(190),
+        threshold_ns(20),
+    )
+
+    assert result.paired_rgb_indices == (1,)
+    assert result.paired_depth_indices == (0,)
+    assert result.rejected_rgb_indices == (0,)
+    assert result.pairs[0].delta_ns == -10
+
+
+def test_pairing_never_reuses_a_depth_frame() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 108),
+        timestamp_array(105),
+        threshold_ns(10),
+    )
+
+    assert result.paired_rgb_indices == (0,)
+    assert result.paired_depth_indices == (0,)
+    assert result.rejected_rgb_indices == (1,)
+
+
+def test_pairing_is_rgb_driven_greedy_without_backtracking() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 110),
+        timestamp_array(106),
+        threshold_ns(10),
+    )
+
+    assert result.paired_rgb_indices == (0,)
+    assert result.pairs[0].delta_ns == 6
+    assert result.rejected_rgb_indices == (1,)
+
+
+def test_pairing_skips_earlier_depth_after_selecting_later_candidate() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 200),
+        timestamp_array(50, 99, 201),
+        threshold_ns(10),
+    )
+
+    assert result.paired_depth_indices == (1, 2)
+    assert result.unmatched_depth_indices == (0,)
+    assert tuple(pair.delta_ns for pair in result.pairs) == (-1, 1)
+
+
+@pytest.mark.parametrize(
+    ("rgb", "depth", "expected_pairs", "expected_rejected", "expected_unmatched"),
+    [
+        (
+            timestamp_array(100, 200, 300),
+            timestamp_array(101, 201),
+            ((0, 0), (1, 1)),
+            (2,),
+            (),
+        ),
+        (
+            timestamp_array(100, 200),
+            timestamp_array(99, 199, 299),
+            ((0, 0), (1, 1)),
+            (),
+            (2,),
+        ),
+    ],
+)
+def test_pairing_supports_different_stream_frame_counts(
+    rgb: np.ndarray,
+    depth: np.ndarray,
+    expected_pairs: tuple[tuple[int, int], ...],
+    expected_rejected: tuple[int, ...],
+    expected_unmatched: tuple[int, ...],
+) -> None:
+    result = pair_frames_by_timestamp(rgb, depth, threshold_ns(10))
+
+    assert (
+        tuple((pair.rgb_index, pair.depth_index) for pair in result.pairs)
+        == expected_pairs
+    )
+    assert result.rejected_rgb_indices == expected_rejected
+    assert result.unmatched_depth_indices == expected_unmatched
+
+
+def test_pairing_allows_all_frames_to_remain_unmatched() -> None:
+    result = pair_frames_by_timestamp(
+        timestamp_array(100, 200),
+        timestamp_array(1_000, 2_000, 3_000),
+        threshold_ns(10),
+    )
+
+    assert result.pairs == ()
+    assert result.rejected_rgb_indices == (0, 1)
+    assert result.unmatched_depth_indices == (0, 1, 2)
+
+
+def test_custom_threshold_changes_pairing_result() -> None:
+    rgb = timestamp_array(100)
+    depth = timestamp_array(115)
+
+    rejected = pair_frames_by_timestamp(rgb, depth, threshold_ns(10))
+    accepted = pair_frames_by_timestamp(rgb, depth, threshold_ns(20))
+
+    assert rejected.accepted_pair_count == 0
+    assert accepted.accepted_pair_count == 1
+
+
+def test_pairing_is_deterministic() -> None:
+    rgb = timestamp_array(100, 200, 300)
+    depth = timestamp_array(95, 105, 205, 305)
+    config = threshold_ns(10)
+
+    first = pair_frames_by_timestamp(rgb, depth, config)
+    second = pair_frames_by_timestamp(rgb, depth, config)
+
+    assert first == second
