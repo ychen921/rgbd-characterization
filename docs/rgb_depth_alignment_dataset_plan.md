@@ -482,7 +482,10 @@ data/
     ├── experiment.yaml
     ├── preflight.yaml
     ├── post_recording.yaml
-    └── extraction_summary.yaml
+    ├── extraction_summary.yaml
+    └── pairing/
+        ├── frame_pairing.csv
+        └── summary.yaml
 ```
 
 Recommended arrays:
@@ -510,6 +513,14 @@ and only then publishes the final output directory. `extraction_summary.yaml`
 records source topics, stream contracts, frame counts, timestamp ranges, and
 storage-versus-header latency. It does not contain paired indices or pairing
 deltas; those belong to the frame-pairing phase.
+
+Pairing artifacts are derived without modifying the extracted NPZ files.
+`frame_pairing.csv` contains accepted one-to-one pairs and preserves exact
+signed nanosecond deltas; `pairing/summary.yaml` stores the pairing contract,
+source stream counts, rejected/unmatched counts, and delta statistics. The
+directory is reload-validated, atomically published, and never overwritten.
+Zero accepted pairs are represented by an empty CSV plus `null` delta
+statistics, not a zero-error measurement.
 
 ---
 

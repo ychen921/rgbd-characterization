@@ -315,7 +315,10 @@ data/
     ├── experiment.yaml
     ├── preflight.yaml
     ├── post_recording.yaml
-    └── extraction_summary.yaml
+    ├── extraction_summary.yaml
+    └── pairing/
+        ├── frame_pairing.csv
+        └── summary.yaml
 ```
 
 Recommended arrays:
@@ -397,6 +400,16 @@ writes the dataset and traceability metadata into a same-filesystem staging
 directory, reload-validates the three NPZ archives, and atomically publishes a
 new output directory. Existing output directories are never overwritten.
 
+Frame pairing is persisted separately under `pairing/`; the source NPZ files
+remain unchanged. `frame_pairing.csv` stores accepted pair indices, both header
+timestamps, exact signed `delta_ns`, and a six-decimal `delta_ms` representation.
+`summary.yaml` records the fixed pairing contract, source frame counts,
+accepted/rejected/unmatched counts, and signed/absolute delta statistics. The
+two files are written to a staging directory, cross-validated by reloading the
+CSV, and atomically published without overwriting an existing `pairing/`
+directory. A completed pairing with no accepted pairs uses YAML `null` for
+delta statistics rather than zero.
+
 ---
 
 ## 8. Project Structure
@@ -426,6 +439,7 @@ rgbd-characterization/
     ├── io/
     │   ├── dataset.py
     │   ├── alignment_dataset.py
+    │   ├── frame_pairing_artifacts.py
     │   ├── ros_image.py
     │   └── alignment_bag_reader.py
     │
